@@ -1,0 +1,60 @@
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: peacefic-mongo
+    restart: unless-stopped
+    # Single-node replica set: multi-document transactions need one, and the
+    # student/attendance/placement writes all span collections.
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    ports:
+      - '27017:27017'
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: >
+        mongosh --quiet --eval "try { rs.status().ok } catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'localhost:27017'}]}).ok }"
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: peacefic-redis
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Captures outbound mail in development so nothing real is ever sent.
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: peacefic-mailhog
+    restart: unless-stopped
+    ports:
+      - '1025:1025'
+      - '8025:8025'
+
+  mongo-express:
+    image: mongo-express:1.0.2
+    container_name: peacefic-mongo-express
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    ports:
+      - '8081:8081'
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://mongodb:27017/?replicaSet=rs0
+      ME_CONFIG_BASICAUTH: 'false'
+
+volumes:
+  mongo_data:
+  redis_data:

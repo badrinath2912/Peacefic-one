@@ -1,0 +1,178 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * One token set, two value sets. Components never reference a raw colour, so
+ * dark mode needs no `dark:` variants and the two themes cannot drift.
+ */
+@layer base {
+  :root {
+    --background: 210 20% 98%;
+    --foreground: 222 47% 11%;
+
+    --surface: 0 0% 100%;
+    --surface-raised: 0 0% 100%;
+    --surface-sunken: 210 20% 96%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 221 83% 53%;
+    --primary-hover: 221 83% 45%;
+    --primary-foreground: 0 0% 100%;
+    --primary-subtle: 221 83% 96%;
+
+    --secondary: 210 20% 96%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 210 20% 96%;
+    --muted-foreground: 215 16% 47%;
+
+    --accent: 226 71% 96%;
+    --accent-foreground: 224 71% 32%;
+
+    --success: 142 71% 36%;
+    --success-foreground: 0 0% 100%;
+    --success-subtle: 142 71% 95%;
+
+    --warning: 32 95% 44%;
+    --warning-foreground: 0 0% 100%;
+    --warning-subtle: 32 95% 95%;
+
+    --danger: 0 72% 51%;
+    --danger-foreground: 0 0% 100%;
+    --danger-subtle: 0 72% 96%;
+
+    --info: 199 89% 48%;
+    --info-foreground: 0 0% 100%;
+    --info-subtle: 199 89% 95%;
+
+    --border: 214 20% 90%;
+    --input: 214 20% 88%;
+    --ring: 221 83% 53%;
+
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 222 47% 7%;
+    --foreground: 210 20% 96%;
+
+    --surface: 222 44% 10%;
+    --surface-raised: 222 40% 13%;
+    --surface-sunken: 222 47% 6%;
+
+    --card: 222 44% 10%;
+    --card-foreground: 210 20% 96%;
+
+    --popover: 222 40% 13%;
+    --popover-foreground: 210 20% 96%;
+
+    /* Lifted and slightly desaturated: the light-mode blue vibrates badly on
+       a dark surface. */
+    --primary: 217 91% 62%;
+    --primary-hover: 217 91% 68%;
+    --primary-foreground: 222 47% 8%;
+    --primary-subtle: 221 60% 18%;
+
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 20% 96%;
+
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+
+    --accent: 217 33% 20%;
+    --accent-foreground: 210 20% 96%;
+
+    --success: 142 61% 45%;
+    --success-foreground: 222 47% 8%;
+    --success-subtle: 142 40% 16%;
+
+    --warning: 32 90% 55%;
+    --warning-foreground: 222 47% 8%;
+    --warning-subtle: 32 50% 17%;
+
+    --danger: 0 72% 60%;
+    --danger-foreground: 222 47% 8%;
+    --danger-subtle: 0 45% 18%;
+
+    --info: 199 85% 58%;
+    --info-foreground: 222 47% 8%;
+    --info-subtle: 199 50% 17%;
+
+    --border: 217 33% 20%;
+    --input: 217 33% 24%;
+    --ring: 217 91% 62%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings:
+      'rlig' 1,
+      'calt' 1;
+  }
+
+  /* A visible focus ring is a requirement, not a decoration. Only remove it
+     for pointer interactions, never for keyboard. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+
+  /* Tabular figures stop numbers jittering as they update in tables and KPIs. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  .skeleton {
+    @apply relative overflow-hidden rounded-md bg-muted;
+  }
+
+  .skeleton::after {
+    @apply absolute inset-0 -translate-x-full animate-shimmer bg-gradient-to-r from-transparent via-black/5 to-transparent content-[''];
+  }
+
+  .dark .skeleton::after {
+    @apply via-white/5;
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-border;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
