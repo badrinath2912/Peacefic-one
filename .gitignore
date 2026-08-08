@@ -41,3 +41,4 @@ cypress/downloads/
 
 .turbo/
 .vercel/
+settings.local.json
