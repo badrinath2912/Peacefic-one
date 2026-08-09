@@ -6,12 +6,23 @@ out/
 coverage/
 .nyc_output/
 
+# Every env file is ignored by default, including variants not yet invented
+# (.env.staging, .env.production, server/.env). The template is the one
+# exception, and the negation must stay last so it wins.
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+.env.*
+**/.env
+**/.env.*
 !.env.example
+!**/.env.example
+
+# Private key material and credential dumps, in any directory.
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+credentials.json
 
 logs/
 *.log

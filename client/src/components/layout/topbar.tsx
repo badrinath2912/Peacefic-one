@@ -5,6 +5,7 @@ import { useTheme } from 'next-themes';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
+import { NotificationBell } from '@/components/notifications/notification-bell';
 import { initials } from '@/lib/utils';
 import { useAuth } from '@/providers/auth-provider';
 import { useAppDispatch } from '@/store';
@@ -12,7 +13,14 @@ import { setMobileNavOpen } from '@/store/ui-slice';
 
 import { Button } from '../ui/button';
 
-export function Topbar({ settingsHref }: { settingsHref: string }) {
+interface TopbarProps {
+  settingsHref: string;
+  /** Null when the portal has no profile page; the menu item is then omitted. */
+  profileHref: string | null;
+  notificationsHref: string;
+}
+
+export function Topbar({ settingsHref, profileHref, notificationsHref }: TopbarProps) {
   const { user, logout } = useAuth();
   const dispatch = useAppDispatch();
   const { resolvedTheme, setTheme } = useTheme();
@@ -40,6 +48,8 @@ export function Topbar({ settingsHref }: { settingsHref: string }) {
           <p className="truncate text-sm font-medium">{user.collegeName}</p>
         ) : null}
       </div>
+
+      <NotificationBell inboxHref={notificationsHref} />
 
       <Button
         variant="ghost"
@@ -84,15 +94,19 @@ export function Topbar({ settingsHref }: { settingsHref: string }) {
               </div>
 
               <div className="p-1">
-                <Link
-                  href={`${settingsHref}/profile`}
-                  role="menuitem"
-                  onClick={() => setMenuOpen(false)}
-                  className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-muted"
-                >
-                  <User className="size-4" aria-hidden />
-                  Profile
-                </Link>
+                {/* Previously `${settingsHref}/profile`, which resolved to
+                    routes that do not exist in either portal. */}
+                {profileHref ? (
+                  <Link
+                    href={profileHref}
+                    role="menuitem"
+                    onClick={() => setMenuOpen(false)}
+                    className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-muted"
+                  >
+                    <User className="size-4" aria-hidden />
+                    Profile
+                  </Link>
+                ) : null}
                 <Link
                   href={settingsHref}
                   role="menuitem"

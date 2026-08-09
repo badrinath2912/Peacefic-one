@@ -74,6 +74,20 @@ export const EXAM_TRANSITIONS: Record<ExamLifecycle, ExamLifecycle[]> = {
   archived: [],
 };
 
+/**
+ * The only lifecycle states a student may see.
+ *
+ * Taken from the transition table above: `scheduled → published` is documented
+ * as the point where "students can see it and hall tickets are valid", so
+ * anything earlier is an internal state belonging to the examination office.
+ */
+const STUDENT_VISIBLE_LIFECYCLE: ExamLifecycle[] = [
+  'published',
+  'completed',
+  'marks_entered',
+  'results_published',
+];
+
 export class ExaminationService {
   constructor(
     private readonly examRepository: ExamRepository,
@@ -269,6 +283,12 @@ export class ExaminationService {
     const allowed = await this.scopeGuard.accessibleDepartmentIds();
 
     if (allowed) filter.departmentId = { $in: allowed };
+
+    // Assigned last so it overwrites any caller-supplied `status`: a student
+    // sending `?status=draft` narrows within this set rather than escaping it.
+    if (!this.isExamStaff()) {
+      filter.status = { $in: STUDENT_VISIBLE_LIFECYCLE };
+    }
 
     return this.examRepository.paginate({
       ...options,
@@ -604,8 +624,24 @@ export class ExaminationService {
 
   /* ---------------------------------- papers --------------------------------- */
 
+  /**
+   * Papers for an exam.
+   *
+   * A student receives the released paper and nothing else. An unreleased
+   * revision carries the question sections and an attachment URL to the actual
+   * paper file, so returning one before release would hand out the exam — this
+   * is an integrity boundary, not a display preference.
+   *
+   * Staff keep the full revision history, which is what the versioning is for.
+   */
   async listPapers(examId: string): Promise<ExamPaperDocument[]> {
     const exam = await this.getExam(examId);
+
+    if (!this.isExamStaff()) {
+      const released = await this.paperRepository.findReleased(exam._id);
+      return released ? [released] : [];
+    }
+
     return this.paperRepository.findMany({ examId: exam._id }, { sort: '-revision' });
   }
 
@@ -862,9 +898,28 @@ export class ExaminationService {
       );
     }
 
+    // Self-service: a student gets their own ticket and no one else's. The
+    // student is resolved from the token, so there is no id to supply and no
+    // way to enumerate the cohort.
+    if (!this.isExamStaff()) {
+      const student = await this.scopeGuard.requireOwnStudent();
+
+      const own = await this.registrationRepository.findOne({
+        examId: exam._id,
+        studentId: student._id,
+      });
+
+      if (!own) return [];
+
+      await this.registrationRepository.populateRelations([own]);
+      return [own];
+    }
+
     const registrations = await this.registrationRepository.findByExam(exam._id);
     await this.registrationRepository.populateRelations(registrations);
 
+    // Only the staff path is audited: issuing the roster is an administrative
+    // act, while a student viewing their own ticket is an ordinary read.
     await this.auditService.log({
       action: 'examination.hall_tickets_generated',
       category: 'data',
@@ -1090,14 +1145,44 @@ export class ExaminationService {
   }
 
   async assertExamVisible(exam: ExamDocument): Promise<void> {
+    // Checked before the department test, and with the same 404, so a student
+    // cannot reach an unpublished exam by id even within their own department.
+    if (!this.isExamStaff() && !STUDENT_VISIBLE_LIFECYCLE.includes(exam.status)) {
+      throw new NotFoundError('Exam');
+    }
+
     const allowed = await this.scopeGuard.accessibleDepartmentIds();
     if (!allowed) return;
 
+    /**
+     * `getExam` populates `departmentId`, so this may be a Document rather than
+     * an ObjectId — and `String(document)` is its inspect output, not the id.
+     * Unwrapping `_id` first makes the comparison correct on both paths.
+     *
+     * Without this the check silently denied every department-scoped caller on
+     * the populated path, which is why no student could open an exam at all.
+     */
+    const relation = exam.departmentId as { _id?: unknown } | null;
+    const departmentId = String(relation?._id ?? exam.departmentId);
+
     const allowedSet = new Set(allowed.map(String));
-    if (!allowedSet.has(String(exam.departmentId))) {
+    if (!allowedSet.has(departmentId)) {
       // 404 rather than 403: a 403 would confirm the exam exists.
       throw new NotFoundError('Exam');
     }
+  }
+
+  /**
+   * Staff hold `exam:update`; a student holds `exam:read` alone. That is the
+   * discriminator for every student-facing narrowing in this service, following
+   * the same idiom as `attendance.service.canOverrideLock`.
+   *
+   * No new permission is introduced: the catalogue already separates reading an
+   * exam from managing one.
+   */
+  private isExamStaff(): boolean {
+    const { permissions } = requestContext.get();
+    return permissions.includes('exam:update') || permissions.includes('*:*');
   }
 
   private hallTicketNumber(examCode: string, sequence: number): string {

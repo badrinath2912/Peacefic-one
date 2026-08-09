@@ -1,4 +1,5 @@
 import { ROLE_KEYS } from '@peacefic/shared';
+import mongoose from 'mongoose';
 import request from 'supertest';
 
 import { ExamModel } from '@/models/exam.model';
@@ -1764,6 +1765,352 @@ describe('examination API', () => {
       await request(app)
         .get(`${API}/examinations/transcripts/${studentId}`)
         .set(auth(token))
+        .expect(403);
+    });
+  });
+
+  /* ------------------- student visibility and exam integrity ------------------ */
+
+  /**
+   * Regression cover for three defects found by audit. All three came from the
+   * same root cause: `exam:read` is held by staff *and* students, and the read
+   * paths narrowed by department without ever narrowing by lifecycle or owner.
+   */
+  describe('student visibility and exam integrity', () => {
+    async function signInStudent(email = 'meera.iyer@example.edu'): Promise<{
+      token: string;
+      studentId: string;
+    }> {
+      const user = await UserModel.findOne({ email }).exec();
+      if (!user) throw new Error(`No user for ${email}`);
+
+      const student = await StudentModel.findOne({ userId: user._id }).exec();
+      if (!student) throw new Error(`No student record for ${email}`);
+
+      const { hashPassword } = await import('@/utils/crypto');
+
+      await UserModel.updateOne(
+        { _id: user._id },
+        { $set: { status: 'active', passwordHash: await hashPassword('CorrectHorse9') } },
+      ).exec();
+
+      const login = await request(app)
+        .post(`${API}/auth/login`)
+        .send({ email, password: 'CorrectHorse9' })
+        .expect(200);
+
+      return { studentId: String(student._id), token: login.body.data.accessToken as string };
+    }
+
+    /** An exam driven to `published`, with the student registered on it. */
+    async function publishedExamWithStudent() {
+      const examId = await createExam();
+      const studentId = await createStudent();
+
+      await request(app)
+        .post(`${API}/examinations/${examId}/registrations`)
+        .set(auth(tenant.token))
+        .send({ studentIds: [studentId] })
+        .expect(201);
+
+      await transition(examId, 'scheduled');
+      await transition(examId, 'published');
+
+      return { examId, studentId };
+    }
+
+    async function addPaper(examId: string, isReleased: boolean, title: string) {
+      return request(app)
+        .post(`${API}/examinations/${examId}/papers`)
+        .set(auth(tenant.token))
+        .send({
+          title,
+          totalMarks: 100,
+          sections: [{ name: 'Section A', questionCount: 10, marksPerQuestion: 10 }],
+          instructions: 'Answer all questions.',
+          attachment: {
+            url: 'https://files.example.edu/paper.pdf',
+            fileName: 'paper.pdf',
+            fileKey: `papers/${title}.pdf`,
+            sizeBytes: 1024,
+            mimeType: 'application/pdf',
+          },
+          isReleased,
+        })
+        .expect(201);
+    }
+
+    /* ------------------------- defect 1: draft exams ------------------------ */
+
+    it('shows a student a published exam', async () => {
+      await publishedExamWithStudent();
+      const { token } = await signInStudent();
+
+      const response = await request(app)
+        .get(`${API}/examinations`)
+        .set(auth(token))
+        .expect(200);
+
+      expect(response.body.data).toHaveLength(1);
+      expect(response.body.data[0].status).toBe('published');
+    });
+
+    it('hides a draft exam from a student', async () => {
+      await createExam();
+      await createStudent();
+      const { token } = await signInStudent();
+
+      const response = await request(app)
+        .get(`${API}/examinations`)
+        .set(auth(token))
+        .expect(200);
+
+      expect(response.body.data).toEqual([]);
+    });
+
+    it('hides a scheduled exam from a student', async () => {
+      const examId = await createExam();
+      await createStudent();
+      await transition(examId, 'scheduled');
+
+      const { token } = await signInStudent();
+
+      const response = await request(app)
+        .get(`${API}/examinations`)
+        .set(auth(token))
+        .expect(200);
+
+      expect(response.body.data).toEqual([]);
+    });
+
+    /** The filter is applied last, so a caller-supplied status cannot widen it. */
+    it('does not let ?status=draft expose drafts to a student', async () => {
+      await createExam();
+      await createStudent();
+      const { token } = await signInStudent();
+
+      const response = await request(app)
+        .get(`${API}/examinations?status=draft`)
+        .set(auth(token))
+        .expect(200);
+
+      expect(response.body.data).toEqual([]);
+    });
+
+    it('refuses a student fetching an unpublished exam by id', async () => {
+      const examId = await createExam();
+      await createStudent();
+      const { token } = await signInStudent();
+
+      // 404 rather than 403 — a 403 would confirm the exam exists.
+      await request(app)
+        .get(`${API}/examinations/${examId}`)
+        .set(auth(token))
+        .expect(404);
+    });
+
+    it('leaves staff able to see drafts', async () => {
+      await createExam();
+
+      const response = await request(app)
+        .get(`${API}/examinations?status=draft`)
+        .set(auth(tenant.token))
+        .expect(200);
+
+      expect(response.body.data).toHaveLength(1);
+      expect(response.body.data[0].status).toBe('draft');
+    });
+
+    /* ------------------------ defect 2: exam papers ------------------------- */
+
+    it('gives a student the released paper only', async () => {
+      const { examId } = await publishedExamWithStudent();
+
+      await addPaper(examId, false, 'Unreleased revision');
+      await addPaper(examId, true, 'Released revision');
+
+      const { token } = await signInStudent();
+
+      const response = await request(app)
+        .get(`${API}/examinations/${examId}/papers`)
+        .set(auth(token))
+        .expect(200);
+
+      expect(response.body.data).toHaveLength(1);
+      expect(response.body.data[0].title).toBe('Released revision');
+      expect(response.body.data[0].isReleased).toBe(true);
+    });
+
+    /**
+     * The whole point of the fix: an unreleased paper carries the question
+     * sections and a URL to the actual file.
+     */
+    it('never leaks an unreleased paper, its sections or its attachment', async () => {
+      const { examId } = await publishedExamWithStudent();
+      await addPaper(examId, false, 'Unreleased revision');
+
+      const { token } = await signInStudent();
+
+      const response = await request(app)
+        .get(`${API}/examinations/${examId}/papers`)
+        .set(auth(token))
+        .expect(200);
+
+      expect(response.body.data).toEqual([]);
+
+      const body = JSON.stringify(response.body);
+      expect(body).not.toContain('Unreleased revision');
+      expect(body).not.toContain('Section A');
+      expect(body).not.toContain('files.example.edu');
+    });
+
+    it('gives staff the full revision history', async () => {
+      const { examId } = await publishedExamWithStudent();
+
+      await addPaper(examId, false, 'Unreleased revision');
+      await addPaper(examId, true, 'Released revision');
+
+      const response = await request(app)
+        .get(`${API}/examinations/${examId}/papers`)
+        .set(auth(tenant.token))
+        .expect(200);
+
+      expect(response.body.data).toHaveLength(2);
+    });
+
+    /* ----------------------- defect 3: hall tickets ------------------------- */
+
+    it('gives a student only their own hall ticket', async () => {
+      const { examId } = await publishedExamWithStudent();
+
+      const otherId = await createStudent({
+        email: 'second.student@example.edu',
+        rollNumber: 'CS22B002',
+        firstName: 'Arun',
+      });
+
+      await request(app)
+        .post(`${API}/examinations/${examId}/registrations`)
+        .set(auth(tenant.token))
+        .send({ studentIds: [otherId] })
+        .expect(201);
+
+      const { token } = await signInStudent();
+
+      const response = await request(app)
+        .get(`${API}/examinations/${examId}/hall-tickets`)
+        .set(auth(token))
+        .expect(200);
+
+      // The controller projects the registration down to a hall ticket, so the
+      // student is identified by roll number rather than id.
+      expect(response.body.data).toHaveLength(1);
+      expect(response.body.data[0].rollNumber).toBe('CS22B001');
+
+      // The other candidate must appear nowhere in the payload.
+      expect(JSON.stringify(response.body)).not.toContain('CS22B002');
+    });
+
+    it('gives staff the whole roster', async () => {
+      const { examId } = await publishedExamWithStudent();
+
+      const otherId = await createStudent({
+        email: 'second.student@example.edu',
+        rollNumber: 'CS22B002',
+        firstName: 'Arun',
+      });
+
+      await request(app)
+        .post(`${API}/examinations/${examId}/registrations`)
+        .set(auth(tenant.token))
+        .send({ studentIds: [otherId] })
+        .expect(201);
+
+      const response = await request(app)
+        .get(`${API}/examinations/${examId}/hall-tickets`)
+        .set(auth(tenant.token))
+        .expect(200);
+
+      expect(response.body.data).toHaveLength(2);
+    });
+
+    it('returns nothing for a student not registered on the exam', async () => {
+      const examId = await createExam();
+
+      // Meera is never registered. Arun is, because publishing an exam with an
+      // empty roster is refused by the lifecycle rules.
+      await createStudent();
+      const registeredId = await createStudent({
+        email: 'second.student@example.edu',
+        rollNumber: 'CS22B002',
+        firstName: 'Arun',
+      });
+
+      await request(app)
+        .post(`${API}/examinations/${examId}/registrations`)
+        .set(auth(tenant.token))
+        .send({ studentIds: [registeredId] })
+        .expect(201);
+
+      await transition(examId, 'scheduled');
+      await transition(examId, 'published');
+
+      const { token } = await signInStudent();
+
+      const response = await request(app)
+        .get(`${API}/examinations/${examId}/hall-tickets`)
+        .set(auth(token))
+        .expect(200);
+
+      expect(response.body.data).toEqual([]);
+    });
+
+    /* ------------------------- isolation and RBAC --------------------------- */
+
+    it('keeps a student scoped to their own college', async () => {
+      const { examId } = await publishedExamWithStudent();
+
+      // A second tenant exists but owns nothing this student may reach.
+      await createTenant(app, { code: 'KCT', adminEmail: 'admin.kct@example.edu' });
+
+      const { token } = await signInStudent();
+
+      const list = await request(app)
+        .get(`${API}/examinations`)
+        .set(auth(token))
+        .expect(200);
+
+      expect(list.body.data).toHaveLength(1);
+      expect(String(list.body.data[0].id)).toBe(examId);
+
+      // An id outside the caller's tenant is indistinguishable from one that
+      // does not exist — 404, never 403.
+      const foreignId = new mongoose.Types.ObjectId().toString();
+
+      await request(app)
+        .get(`${API}/examinations/${foreignId}`)
+        .set(auth(token))
+        .expect(404);
+
+      await request(app)
+        .get(`${API}/examinations/${foreignId}/papers`)
+        .set(auth(token))
+        .expect(404);
+    });
+
+    it('still refuses a caller with no exam permission', async () => {
+      const { examId } = await publishedExamWithStudent();
+
+      const officer = await createStaffUser(app, tenant, {
+        roleKey: ROLE_KEYS.PLACEMENT_OFFICER,
+        email: 'officer.exams@example.edu',
+      });
+
+      await request(app).get(`${API}/examinations`).set(auth(officer.token)).expect(403);
+
+      await request(app)
+        .get(`${API}/examinations/${examId}/papers`)
+        .set(auth(officer.token))
         .expect(403);
     });
   });

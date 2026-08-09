@@ -1,6 +1,7 @@
 import {
   Award,
   BarChart3,
+  Bell,
   BookOpen,
   Briefcase,
   Building2,
@@ -133,6 +134,13 @@ export const COLLEGE_NAV: NavSection[] = [
   {
     label: 'Administration',
     items: [
+      {
+        label: 'Notifications',
+        href: '/college/notifications',
+        icon: Bell,
+        permissions: ['notification:read'],
+        badgeKey: 'notifications',
+      },
       { label: 'Audit log', href: '/college/audit', icon: ScrollText, permissions: ['audit:read'] },
       {
         label: 'Support',
@@ -209,6 +217,13 @@ export const STUDENT_NAV: NavSection[] = [
   {
     label: 'Account',
     items: [
+      {
+        label: 'Notifications',
+        href: '/student/notifications',
+        icon: Bell,
+        permissions: ['notification:read'],
+        badgeKey: 'notifications',
+      },
       { label: 'Profile', href: '/student/profile', icon: Users, permissions: ['student:read_own'] },
       {
         label: 'Support',

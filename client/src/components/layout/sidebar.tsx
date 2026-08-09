@@ -1,10 +1,12 @@
 'use client';
 
-import { ChevronLeft, GraduationCap } from 'lucide-react';
+import { ChevronLeft } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
-import { COLLEGE_NAV, STUDENT_NAV, type NavSection } from '@/config/navigation';
+import { useUnreadNotificationCount } from '@/api/notification-queries';
+import { BrandLogo } from '@/components/layout/brand-logo';
+import { COLLEGE_NAV, STUDENT_NAV, type NavItem, type NavSection } from '@/config/navigation';
 import { canAny } from '@/lib/permissions';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/providers/auth-provider';
@@ -72,13 +74,8 @@ export function Sidebar({ portal }: SidebarProps) {
         )}
       >
         <div className="flex h-14 items-center gap-2 border-b border-border px-4">
-          <Link href={homeHref} className="flex items-center gap-2 overflow-hidden">
-            <span className="grid size-8 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground">
-              <GraduationCap className="size-4" aria-hidden />
-            </span>
-            {!collapsed ? (
-              <span className="truncate text-sm font-semibold tracking-tight">Peacefic One</span>
-            ) : null}
+          <Link href={homeHref} className="overflow-hidden">
+            <BrandLogo size="sm" showWordmark={!collapsed} />
           </Link>
         </div>
 
@@ -106,7 +103,7 @@ export function Sidebar({ portal }: SidebarProps) {
                     aria-current={active ? 'page' : undefined}
                     title={collapsed ? item.label : undefined}
                     className={cn(
-                      'flex items-center gap-3 rounded-md px-2 py-2 text-sm font-medium transition-colors',
+                      'relative flex items-center gap-3 rounded-md px-2 py-2 text-sm font-medium transition-colors',
                       active
                         ? 'bg-primary-subtle text-primary'
                         : 'text-muted-foreground hover:bg-muted hover:text-foreground',
@@ -115,6 +112,10 @@ export function Sidebar({ portal }: SidebarProps) {
                   >
                     <Icon className="size-4 shrink-0" aria-hidden />
                     {!collapsed ? <span className="truncate">{item.label}</span> : null}
+
+                    {item.badgeKey ? (
+                      <NavBadge badgeKey={item.badgeKey} collapsed={collapsed} />
+                    ) : null}
                   </Link>
                 );
               })}
@@ -140,5 +141,43 @@ export function Sidebar({ portal }: SidebarProps) {
         </div>
       </aside>
     </>
+  );
+}
+
+/**
+ * Makes `badgeKey` real.
+ *
+ * Each key gets its own component so the data hook is called unconditionally
+ * inside it — a `switch` around a hook would break the rules of hooks.
+ *
+ * `tickets` renders nothing on purpose: there is no ticket backend, so there is
+ * no count to show. The key stays in the nav config for when that module lands.
+ */
+function NavBadge({ badgeKey, collapsed }: { badgeKey: NonNullable<NavItem['badgeKey']>; collapsed: boolean }) {
+  if (badgeKey === 'notifications') return <NotificationNavBadge collapsed={collapsed} />;
+  return null;
+}
+
+function NotificationNavBadge({ collapsed }: { collapsed: boolean }) {
+  // Only mounted for a user who holds `notification:read`: the item is filtered
+  // out above otherwise, so no request is made for someone who cannot read it.
+  const count = useUnreadNotificationCount();
+  const unread = count.data?.unread ?? 0;
+
+  if (unread === 0) return null;
+
+  const label = unread > 99 ? '99+' : String(unread);
+
+  return (
+    <span
+      className={cn(
+        'grid min-w-4 place-items-center rounded-full bg-danger px-1 text-[10px] font-semibold leading-4 text-danger-foreground',
+        // Collapsed to an icon rail, the badge rides the top-right corner.
+        collapsed ? 'absolute right-1 top-1' : 'ml-auto',
+      )}
+    >
+      {label}
+      <span className="sr-only"> unread</span>
+    </span>
   );
 }

@@ -21,9 +21,27 @@ interface AppShellProps {
   portal: Portal;
 }
 
-const PORTAL_ROUTES: Record<Portal, { home: string; settings: string }> = {
-  college: { home: '/college', settings: '/college/settings' },
-  student: { home: '/student', settings: '/student/settings' },
+/**
+ * `profile` is null for the college portal because no college profile page
+ * exists. The menu item is hidden rather than pointed at a route that would
+ * 404 — which is what it did before, via `${settings}/profile`.
+ */
+const PORTAL_ROUTES: Record<
+  Portal,
+  { home: string; settings: string; profile: string | null; notifications: string }
+> = {
+  college: {
+    home: '/college',
+    settings: '/college/settings',
+    profile: null,
+    notifications: '/college/notifications',
+  },
+  student: {
+    home: '/student',
+    settings: '/student/settings',
+    profile: '/student/profile',
+    notifications: '/student/notifications',
+  },
 };
 
 export function AppShell({ children, portal }: AppShellProps) {
@@ -35,7 +53,11 @@ export function AppShell({ children, portal }: AppShellProps) {
       <Sidebar portal={portal} />
 
       <div className={cn('transition-[padding] duration-200', collapsed ? 'lg:pl-16' : 'lg:pl-64')}>
-        <Topbar settingsHref={routes.settings} />
+        <Topbar
+          settingsHref={routes.settings}
+          profileHref={routes.profile}
+          notificationsHref={routes.notifications}
+        />
         <main id="main" className="p-4 sm:p-6">
           {children}
         </main>

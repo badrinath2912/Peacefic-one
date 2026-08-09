@@ -1,27 +1,74 @@
 # Peacefic One — Project Progress
 
-Updated after every session. Latest: **Session 30 — /college/audit, and the HTTP layer it needed**
+Updated after every session. Latest: **Session 36 — security incident containment**
 
 ---
 
-## Overall completion: ~98%
+## 🔴 Production readiness: BLOCKED
+
+A real `.env` was committed to the **public** GitHub repository and remains in history, reachable
+from `origin/main` (commit `a324fcd`). Four secrets are exposed: `MONGODB_URI`,
+`JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `JWT_INVITE_SECRET`.
+
+```
+Credential exposure:   CONFIRMED
+Credential compromise: ASSUMED
+Unauthorized access:   NOT CONFIRMED — requires Atlas evidence
+```
+
+**No deployment until all four are rotated.** The JWT access secret alone permits forging a token
+for any user in any tenant, which bypasses `ScopeGuard`, RBAC and every ownership check at the
+signature boundary. Full detail in the session 36 entry.
+
+---
+
+## Overall development completion: ~85%
+
+Scope was fixed in session 38 to **ERP + Placement only**. The figures below are measured against
+that scope, not against the full permission catalogue — which describes a much larger LMS product
+that is explicitly out of scope.
+
+| Measurement | Status | Note |
+|---|---|---|
+| Core implemented modules | ~98% | Unchanged |
+| Navigation / UI coverage | ~92% | 3 in-scope dead routes remain |
+| Permission catalogue coverage | ~75% | 96 enforced of ~129 in-scope |
+| **Overall functional development** | **~85%** | ~6–8 sessions of in-scope work remain |
+| Automated verification | Excellent | |
+| Production readiness | **BLOCKED** | Credential rotation outstanding |
+
+Provisional until the 32 out-of-scope permissions, four orphaned schemas and three navigation
+entries are actually removed — see session 38. Against the *original* full-catalogue scope the
+figure was ~72%; the denominator shrank, which is a scope change rather than progress.
+
+**The ~98% figure describes only the modules already built — it is not the project total.** The
+honest summary:
+
+> A substantially implemented and well-tested two-portal platform at roughly 72% overall
+> development completion. Core implemented modules are approximately 98% complete, but several
+> planned modules and navigation areas remain unfinished. Production deployment is currently
+> blocked by a confirmed public credential exposure.
 
 | Layer | State |
 |---|---|
 | Shared contracts (Zod, enums, permissions) | Stable |
 | Backend core (auth, tenancy, RBAC, audit) | Stable |
-| Backend modules | 15 of ~18 |
-| Frontend modules | 15 of ~18 |
+| Backend modules implemented | 17 routers mounted |
+| Backend modules unimplemented | Tickets, Assignments, Online exams, Materials, Live classes, Certificates, Announcements; College settings / User CRUD / Role CRUD have model + repository only |
+| Frontend | 90 pages; 6 dead navigation routes |
+| Permissions | 96 of 161 enforced; 65 dead |
 | Infrastructure (sockets, jobs, CI/CD, docs) | Not started |
 
-**Verification at end of session 30**
+**Last verified baseline** (end of session 35 — not re-run since; session 36 changed no
+functional code)
 
 ```
-npm run typecheck   ✓  shared + server + client
-npx eslint          ✓  client/src, client/tests, server/src, shared/src — zero errors
-npm run build       ✓  client, 51 static pages, 87 app routes
-npx vitest run      ✓  398 client tests, 26 suites
-npx jest            ✓  570 server tests, 19 suites, clean single run
+jest                ✓  599 server tests, 20 suites
+vitest              ✓  504 client tests, 31 files
+typecheck           ✓  server + client
+eslint              ✓  0 warnings, 0 errors
+build:client        ✓  56 static pages
+git diff --check    ✓
 ```
 
 Placement is complete end to end, on both sides. The office runs a drive from a company record
@@ -2850,3 +2897,755 @@ page over `GET /examinations` but needs the draft-visibility fix first; `/studen
 batch scoping and published-only filtering server-side; and assignments, support and preferences are
 three separate backend milestones. The cheapest genuine win is the preferences endpoint — one route,
 one service method, a schema that already exists — which would complete this page.
+
+---
+
+## Session 34 — Notifications HTTP layer
+
+The second module where the backend existed and only the HTTP layer was missing — the same shape as
+Audit in session 30. `NotificationModel`, `NotificationRepository` and `NotificationService` were
+complete, registered in the container and already used by seven other services; nothing could reach
+them over HTTP.
+
+**No model, repository or service was modified.** `container.ts` needed no change.
+
+### Files created (3)
+
+`server/src/controllers/notification.controller.ts` · `server/src/routes/v1/notification.routes.ts` ·
+`server/tests/integration/notification.test.ts`
+
+### Files modified (1)
+
+`server/src/routes/v1/index.ts` — import and mount.
+
+### Endpoints (5)
+
+`GET /notifications` · `GET /notifications/unread-count` · `PATCH /notifications/:id/read` ·
+`PATCH /notifications/read-all` · `DELETE /notifications/:id`
+
+All gated on `notification:read`, previously dead and now live. Dead permissions 66 → 65.
+
+### Three decisions worth recording
+
+**No send endpoint.** `NotificationService.notify` accepts an explicit recipient list and performs no
+check that those users belong to the caller's college — and `NotificationRepository` is
+`tenantScoped: false` by design, because a notification belongs to a person rather than a college.
+Exposing `notify` would therefore be a cross-tenant write. Safe audience resolution is service work,
+not an HTTP layer, so `notification:send`, `announcement:create` and `announcement:publish` stay
+dead. A test asserts `POST /notifications` is 404.
+
+**Ownership is by `userId`, from the token, on every route.** No id is accepted from the client
+anywhere. A test proves one college's rows stay invisible to another even though the repository is
+not tenant-scoped.
+
+**No 404 for someone else's notification.** The repository's update filter carries the caller's
+`userId`, so another user's row is never matched. Answering 404 versus 200 would confirm whether a
+given id exists, so both cases return an unchanged unread count instead. Two tests pin it.
+
+### Declared only what the repository applies
+
+The route schema `.pick()`s `page`, `limit`, `category` and `unread` from the shared
+`notificationListQuerySchema`. That schema also carries `priority`, plus `sort`, `search`, `fields`
+and `include` from `paginationQuerySchema` — none of which `findForUser` reads. A test pins that
+those have no effect, so nobody mistakes one for a working filter. Same discipline as session 30.
+
+### Tests added (29) — server 570 → 599
+
+| Suite | Tests | Covers |
+|---|---|---|
+| `notification.test.ts` | 29 | Auth on all five routes, RBAC via a custom role lacking the permission, listing, cross-user and cross-tenant isolation, sort, pagination, category and unread filters, archived exclusion, empty inbox, unread counting, mark-read with idempotency and other-user and nonexistent and malformed ids, mark-all-read with isolation, archive with list removal and soft-archive proof, invalid category, over-limit, ignored filters, and the absence of a send endpoint |
+
+### Verification
+
+```
+typecheck (server)      ✓
+jest                    ✓  599 tests, 20 suites, 629s — clean single run
+typecheck (client)      ✓
+eslint (client)         ✓  0 warnings, 0 errors
+vitest (client)         ✓  471 tests, 29 files
+build:client            ✓  54 static pages
+```
+
+A first server run hit the project's familiar contention: 542 passed, 0 failed, but three suites
+died at import with a jest `readFileBuffer` error on the `exceljs` import, in 1133s against a
+previous 579s. `auth.test.ts` was one and passed 17/17 isolated. The re-run above was clean at 629s.
+Recorded here because the first run is not a result to hide.
+
+### Environment finding — dependency manifests altered outside this work
+
+`git status` shows `server/package.json`, `client/package.json` and `package-lock.json` modified by
+something other than this session (timestamped 17:53), with 2010 lines changed in the lock file.
+The signature is `npm audit fix --force`:
+
+| Package | Was | Now |
+|---|---|---|
+| `exceljs` (server) | `^4.4.0` | `^3.4.0` — **major downgrade**, resolves to 3.4.0 |
+| `nodemailer` (server) | `^6.9.16` | `^9.0.5` |
+| `file-type` (server) | `^19.6.0` | `^22.0.1` — ESM-only, fails to resolve from CommonJS |
+| `vitest` (client) | `^2.1.9` | `^4.1.10` |
+| `next` (client) | `15.1.3` pinned | `^15.5.23` |
+
+Packages also landed in the wrong workspaces: `next` and `vitest` as **production** dependencies of
+the server, `nodemailer` and `file-type` as dependencies of the client.
+
+Everything still passes on the installed tree, and `file-validator.ts` turned out **not** to import
+`file-type` (it uses its own magic-byte checks), so that unresolvable package is declared-but-unused
+rather than a runtime break. The `exceljs` downgrade and the misplaced entries are still wrong.
+
+**No manifest was touched.** Restoring them means `git checkout` on three files plus `npm install`,
+which rewrites `node_modules` — an owner decision, not one to make mid-task.
+
+### Remaining dead routes (6, unchanged)
+
+`/college/support` · `/college/settings` · `/student/courses` · `/student/exams` ·
+`/student/assignments` · `/student/support`.
+
+### Recommended next session
+
+The notifications client layer: a bell in the app shell over `unread-count` and an inbox page. The
+contract is real now, and `badgeKey: 'notifications'` already sits unused in the navigation config.
+
+---
+
+## Session 34a — Dependency manifests restored
+
+Follow-up to the notification work, resolving the manifest changes recorded above. **No source file
+was touched.**
+
+### What was reverted
+
+`git checkout -- package-lock.json server/package.json client/package.json`, then `npm install`.
+The three manifests were backed up first, so the audit-fixed state is recoverable.
+
+Both manifest diffs were confirmed to contain **only dependency lines** — no scripts, no config —
+and `server/src/routes/v1/index.ts` was confirmed to contain only the notification import and mount.
+The notification files are untracked and were never at risk from a targeted checkout.
+
+### Why — the exceljs downgrade never worked
+
+The decisive evidence was in `npm audit` against the modified tree:
+
+```
+uuid <11.1.1 (moderate)
+  exceljs >=3.5.0
+  Depends on vulnerable versions of uuid
+```
+
+`^3.4.0` resolves to **exceljs 3.10.0**, which is still `>=3.5.0`. The downgrade gave up a supported
+major and kept the very advisory it was meant to fix. Together with `next` and `vitest` sitting in
+the server's **production** dependencies, and `nodemailer` and `file-type` in the client's, reverting
+to the committed state was the correct call.
+
+### Restored versions
+
+```
+server exceljs 4.4.0 · nodemailer 6.10.1     client next 15.1.3 · vitest 2.1.9
+next/vitest in server/package.json:          0
+nodemailer/file-type in client/package.json: 0
+```
+
+### Verification after restore — all green
+
+```
+typecheck (server)  ✓        typecheck (client)  ✓
+jest                ✓  599 tests, 20 suites, 678s — clean single run
+eslint (client)     ✓  0 warnings, 0 errors
+vitest (client)     ✓  471 tests, 29 files
+build:client        ✓  54 static pages
+```
+
+### The correction worth recording
+
+Calling the whole change corrupt was too broad. Against the restored baseline
+(**12 vulnerabilities — 2 critical, 4 high, 6 moderate**) part of it was doing real work:
+
+| Change | Verdict |
+|---|---|
+| `next` 15.1.3 → 15.5.23 | **Good** — clears 1 critical + 2 high (postcss, sharp); an in-range minor, and build + 471 tests were observed passing on it |
+| `vitest` 2 → 4 | **Good** — clears a moderate (esbuild), dev-only; 471 tests observed passing on it |
+| `nodemailer` 6 → 9 | **Probably good** — clears a high, but unproven at runtime; tests never open SMTP |
+| `exceljs` 4.4.0 → `^3.4.0` | **Pointless** — same advisory, older major |
+| Packages in the wrong workspace | **Wrong** — Next.js as a production dependency of an Express API |
+
+### Recommended, awaiting approval — targeted, never `--force`
+
+1. `client`: `next` → `^15.5.23` — clears the critical and two highs
+2. `client` devDeps: `vitest` → `^4.1.10` — clears a moderate
+3. `server`: **remove `file-type`** — `file-validator.ts` uses its own magic-byte checks and imports
+   it nowhere, so an unused dependency is clearing a moderate for free
+4. `server`: `nodemailer` → `^9.0.5` — clears a high; review `email.service.ts` first
+5. `server`: **keep `exceljs` at `^4.4.0`** — the uuid advisory has no working fix; wait for upstream
+
+Roughly 12 → 2, with workspace boundaries intact and no `next@16`.
+
+**Not applied.** Items 1, 2 and 4 are version bumps that were asked to be planned deliberately.
+
+---
+
+## Session 35 — Notification client layer
+
+The UI over the notification API built in session 34. Both portals, one shared inbox.
+
+### Files created (6)
+
+**Client (6)** — `api/notification-queries.ts` · `components/notifications/notification-bell.tsx` ·
+`components/notifications/notification-inbox.tsx` · `app/college/notifications/page.tsx` ·
+`app/student/notifications/page.tsx` · plus `tests/notification-bell.test.tsx` and
+`tests/notification-inbox.test.tsx`
+
+### Files modified (4)
+
+`components/layout/app-shell.tsx` · `components/layout/topbar.tsx` ·
+`components/layout/sidebar.tsx` · `config/navigation.ts`
+
+**No backend file was touched.** No contract mismatch was found.
+
+### Shape
+
+Each portal route is a four-line page rendering the shared `NotificationInbox`, so the shell,
+sidebar and guards all come from the portal layout the user is already inside. The bell lives in the
+shared `Topbar` and takes its destination as a prop, so one component serves both portals without
+knowing which it is in.
+
+### `badgeKey` is real for the first time
+
+`sidebar.tsx` now consumes `badgeKey`. Each key gets its own small component so the data hook is
+called unconditionally inside it — a `switch` wrapped around a hook would break the rules of hooks.
+`tickets` deliberately renders nothing: there is no ticket backend, so there is no count. The key
+stays in the config for when that module lands.
+
+### A correction to the handoff, worth recording
+
+The brief said `badgeKey: 'notifications'` already existed in the navigation config and should be
+reused. It did not. The union *type* permitted the value, but no nav item used it and `sidebar.tsx`
+never read `badgeKey` at all — the only two uses were `badgeKey: 'tickets'` on the two Support
+entries. That imprecision came from an earlier summary of mine. The badge mechanism had to be built,
+not reused.
+
+### Bug fixed — broken Profile link in both portals
+
+`topbar.tsx` linked Profile to `` `${settingsHref}/profile` ``, producing
+`/student/settings/profile` and `/college/settings/profile`. **Neither route exists**, so every user
+clicking Profile in the user menu got a 404.
+
+The student portal now points at the real `/student/profile`. The college portal has **no** profile
+page, and inspection confirmed none exists — so rather than invent a route, `profileHref` is `null`
+for college and the menu item is omitted. `AppShell` owns that mapping.
+
+### Only the filters the API honours
+
+Category and read-state, and nothing else. No priority, sort or search control appears anywhere, and
+a test asserts none of those keys ever reach a request URL. The server pins the order to
+newest-first and ignores the rest, so offering them would be a promise it does not keep.
+
+### Tests added (33) — client 471 → 504
+
+| Suite | Tests | Covers |
+|---|---|---|
+| `notification-bell.test.tsx` | 12 | Renders and reads the count, badge shown, no badge at zero, 99+ cap, links to the correct portal inbox for both portals, loading, count failure not breaking the shell, renders nothing without the permission, no request without the permission, no user id |
+| `notification-inbox.test.tsx` | 21 | Listing, action link, unread marking, loading, empty, error without internal detail, mark one read, no mark-read on an already-read row, mark all read with its message, mark-all hidden at zero unread, archive, list refreshed after an action, failed action surfaced without breaking the list, category and unread filters, no unsupported filter offered or sent, pagination, single-page hiding, redirect without the permission, no request without it, only `/notifications*` touched, no send affordance |
+
+### Verification
+
+```
+typecheck (client)  ✓  exit 0
+eslint (client)     ✓  0 warnings, 0 errors
+vitest (client)     ✓  504 tests, 31 files
+build:client        ✓  56 static pages, both new routes emitted static
+git diff --check    ✓  exit 0
+```
+
+`package-lock.json` shows as modified but `git diff --numstat` reports zero content changes — the
+working copy differs only by LF/CRLF normalisation.
+
+### Remaining dead routes (6, unchanged)
+
+`/college/support` · `/college/settings` · `/student/courses` · `/student/exams` ·
+`/student/assignments` · `/student/support`.
+
+Note that `/college/settings` is now reachable from two places that 404 — the sidebar Settings item
+and the topbar Settings link — which is the strongest argument yet for building it next.
+
+---
+
+## Session 38 — Product scope decided
+
+No code changed. Security remains the blocker; rotation is still unconfirmed. Two decisions were
+taken that materially reshape the remaining roadmap.
+
+### Decision 1 — Hall tickets: student self-service
+
+`GET /examinations/:id/hall-tickets` currently returns every registration for an exam and is gated
+on `exam:read`, which students hold — so a student can enumerate classmates (exam finding #3).
+
+**Agreed fix:** staff keep the full roster; a student receives **only their own** ticket, resolved
+via `ScopeGuard.requireOwnStudent()`. This matches `/attendance/me` and `/students/me`, needs no new
+permission, and lets the student portal offer a hall-ticket download.
+
+### Decision 2 — Product scope: ERP + Placement only
+
+**In scope:** college settings · student preferences · student exams · users CRUD · roles CRUD
+
+**Out of scope:** tickets/support · assignments · course materials · live classes · online exams ·
+question bank · certificates · announcements
+
+This is the decision that has been distorting every completion figure. The permission catalogue and
+four orphaned shared schemas describe a much larger product — a full LMS — than is actually wanted.
+
+### What this changes
+
+**32 of the 65 dead permissions belong to out-of-scope modules** and should be removed from the
+catalogue rather than implemented: ticket (7), assignment (6), liveclass (5), question (4),
+material (4), certificate (4), announcement (2).
+
+**Four shared schema files become dead contracts** and should be deleted with them:
+`assignment.schema.ts`, `ticket.schema.ts`, `exam.schema.ts` (the online-exam/proctoring contract),
+and the announcement half of `notification.schema.ts`.
+
+**Three navigation entries should be removed**, not built: `/college/support`, `/student/support`,
+`/student/assignments`. Dead routes drop from 6 to 3 — `/college/settings`, `/student/exams`,
+`/student/courses`.
+
+**`/student/courses` is now a judgement call.** The Courses backend exists, but materials and live
+classes are out of scope, so the page can only list courses with no content inside them. Worth
+confirming whether it stays or is dropped too.
+
+### Revised completion figures
+
+The denominator shrank, so the percentages move. This is a scope change, not progress.
+
+| Measurement | Before | Now | Why |
+|---|---|---|---|
+| Overall development completion | ~72% | **~85%** | ~6–8 sessions of real work remain, against ~35 already spent |
+| Core implemented modules | ~98% | ~98% | Unchanged |
+| Navigation / UI coverage | ~85% | ~92% | 3 dead routes remain of ~37, once the out-of-scope entries are removed |
+| Permission catalogue coverage | ~60% | ~75% | 96 enforced of ~129 in-scope, once 32 are pruned |
+| Production readiness | BLOCKED | **BLOCKED** | Unchanged — credential rotation still outstanding |
+
+**These figures are provisional until the out-of-scope permissions, schemas and nav entries are
+actually removed.** Nothing has been deleted yet; that work is blocked with everything else.
+
+### Remaining in-scope work
+
+| # | Task | Sessions |
+|---|---|---|
+| 0 | **Credential rotation + Atlas review + repo strategy** | user action |
+| 1 | Dependency security (Next 15.5.23, Vitest 4, drop `file-type`, keep ExcelJS 4.4.0) | ~½ |
+| 2 | Exam security fixes — draft visibility, unreleased papers, hall tickets | ~1 |
+| 3 | Student preferences | ~½ |
+| 4 | College settings (backend + UI) | ~1–2 |
+| 5 | Student exams UI | ~1 |
+| 6 | Users CRUD + Roles CRUD | ~2 |
+| 7 | Scope cleanup — remove out-of-scope permissions, schemas, nav | ~½ |
+
+Roughly **6–8 sessions** to a coherent, in-scope, production-ready product.
+
+### Priority 3 pre-design — student preferences (read-only inspection)
+
+Everything needed already exists; only the write path is missing.
+
+- `updatePreferencesSchema` is defined in `shared/src/schemas/auth.schema.ts`, exported from the
+  shared index, and referenced by **zero** code — theme (`light|dark|system`), locale,
+  `emailNotifications`, `pushNotifications`, all optional.
+- `AuthenticatedUser` in `shared/src/types/api.ts:92` **already carries `preferences`**, and
+  `getSession` returns them — so the client has the current values in `useAuth().user.preferences`
+  with no extra request.
+- `notification.service.ts:105` already honours `emailNotifications`, so the setting is live the
+  moment it becomes writable.
+- The auth provider already exposes `updateUser()` to sync local state after a save.
+
+Implementation shape, following the existing self-service pattern (`change-password`, `sessions`):
+`PATCH /auth/preferences`, authenticated, **no permission** — consistent with the other
+`/auth` self-service routes; `AuthService.updatePreferences(userId, input)` writing via
+`userRepository.updateById` with dot-notation for the nested partial; a controller method resolving
+the user from `requestContext.userId()`; a client mutation hook; and a Preferences card added to the
+existing `/student/settings` page.
+
+**Related gap noticed:** `updateProfileSchema` (firstName, lastName, phone, avatarUrl) is also
+defined, exported and referenced by nothing — users cannot edit their own name or avatar. Small, and
+a natural companion to preferences.
+
+---
+
+## Session 39 — Examination security fixes, fully verified
+
+Three audited defects fixed, plus a fourth found during testing. **No new permission was
+introduced** and no unrelated code was touched.
+
+### Files modified (2)
+
+`server/src/services/examination.service.ts` (+87 lines, 1 deletion) ·
+`server/tests/integration/examination.test.ts` (+347 lines, 14 tests)
+
+### The staff/student discriminator
+
+Staff hold `exam:update`; a student holds `exam:read` alone. That existing distinction is the whole
+mechanism — `isExamStaff()` checks it, following the idiom already used by
+`attendance.service.canOverrideLock`. Every security change is guarded by `!this.isExamStaff()`, so
+staff paths are provably unchanged, which the staff-side tests confirm independently.
+
+### Defect 1 — draft exams visible to students
+
+`STUDENT_VISIBLE_LIFECYCLE` is `published`, `completed`, `marks_entered`, `results_published` —
+taken from the service's own transition table, which documents `scheduled → published` as the point
+where "students can see it and hall tickets are valid".
+
+In `listExams` the status filter is assigned **after** the caller's filter is spread, so
+`?status=draft` narrows within the allow-list rather than escaping it. `assertExamVisible` applies
+the same list, with the same 404 the department check uses.
+
+### Defect 2 — unreleased question papers exposed (highest severity)
+
+`listPapers` returned every revision regardless of `isReleased`. An unreleased paper carries the
+question `sections` and an `attachment.url` pointing at the actual paper file, so a student holding
+`exam:read` could fetch the exam before it was sat.
+
+`ExamPaperRepository.findReleased()` already existed and was already used by `getExamProfile` —
+`listPapers` simply never called it. Students now receive the released paper only; staff keep the
+full revision history, which is what the versioning is for.
+
+### Defect 3 — hall-ticket enumeration
+
+Students receive their own ticket via `ScopeGuard.requireOwnStudent()`, mirroring `/attendance/me`
+and `/students/me`. Staff keep the roster. Only the staff path writes the audit entry: issuing a
+roster is an administrative act, a student viewing their own ticket is an ordinary read.
+
+### Defect 4 — found while testing, not by the audit
+
+`assertExamVisible` compared `String(exam.departmentId)` against the allowed set, but `getExam`
+**populates** `departmentId` — so that stringified the Mongoose document, never the id.
+
+**Fail-closed, so not a security hole** — but it meant no department-scoped caller could open any
+exam by id at all. It stayed invisible because college admins are college-wide and take the early
+return, and no existing test had a student fetch an exam by id. It would have blocked the entire
+`/student/exams` feature. Fixed by unwrapping `_id` before comparison, so populated and raw paths
+both work.
+
+### Tests added (14) — examination 64 → 78, server 599 → 613
+
+Published visible · draft hidden · scheduled hidden · `?status=draft` cannot bypass · unpublished
+404 by id · **staff still see drafts** · released paper only · unreleased paper, sections and
+attachment URL never leaked · **staff keep full revision history** · student gets own ticket only ·
+**staff keep whole roster** · unregistered student gets nothing · tenant scoping · placement officer
+still 403.
+
+No existing test was removed, skipped or weakened.
+
+### Verification — all executed this session
+
+```
+jest (full server)      PASS  613/613 tests, 20/20 suites, 1068.8s, exit 0
+  examination.test.ts   PASS  78/78   (isolated 112.7s, and in-run 180.0s)
+  notification.test.ts  PASS  29/29   (isolated 114.1s, and in-run 71.9s)
+typecheck (server)      PASS  exit 0
+vitest (client)         PASS  504/504 tests, 31 files, exit 0
+typecheck (client)      PASS  exit 0
+eslint (client)         PASS  0 warnings, 0 errors
+build:client            PASS  compiled, 56 static pages
+git diff --check        PASS  exit 0
+```
+
+### An earlier full run was not clean — recorded rather than hidden
+
+A prior attempt returned 611/613 with `notification.test.ts` failing on
+`MongoNetworkTimeoutError → PoolClearedOnNetworkError`, cascading into
+`E11000 duplicate key: colleges.code "PIT"` because `beforeEach` cleanup never completed. That suite
+took **1350.4s** in the failed run against **71.9s** in the clean one — an ~19× difference on
+identical code. Environmental contention, not a regression; my changes touch only examination files.
+
+### Percentages — deliberately unchanged
+
+```
+Overall ~85% · Backend ~88% · Frontend ~84%
+Core ~98% · Navigation ~92% · Permissions ~75%
+Production readiness: BLOCKED
+```
+
+**Backend stays at ~88%.** This session hardened a module that was already built and added
+regression coverage; it did not ship any of the five remaining backend modules (college settings,
+preferences, profile, users CRUD, roles CRUD). Test and security *quality* improved; implementation
+*coverage* did not. Those are different axes and are not merged here.
+
+```
+Credential exposure:   CONFIRMED
+Credential compromise: ASSUMED
+Unauthorized access:   NOT CONFIRMED — requires Atlas evidence
+```
+
+---
+
+## Session 40 — Registration page (fixing the /register 404)
+
+### Root cause
+
+`client/src/app/(auth)/login/page.tsx:139` links to `/register`, but `client/src/app/(auth)/`
+contained only `login/`. **The page was never built.** Not a routing bug, not a broken link, not a
+guard — a missing file. The backend API had existed all along.
+
+### Backend: reused, not rebuilt
+
+`POST /auth/register/college` already exists, validated by `registerCollegeSchema`, rate-limited by
+`registerRateLimit`, and covered by 10 assertions in `auth.test.ts`. **No server file was touched
+and no new API, permission or schema was added.**
+
+The endpoint answers `201 { email, message }` and deliberately creates **no session** — the address
+is verified by email, then a reviewer approves the institution. The page mirrors that: success shows
+what happens next instead of redirecting into a portal the account cannot yet reach.
+
+`registerStudentSchema` exists but has **no route**, so `/register` is institution-only. That is
+consistent with `allowStudentSelfRegistration` being an unreachable college setting.
+
+### Files created (2)
+
+`client/src/app/(auth)/register/page.tsx` · `client/tests/register-page.test.tsx`
+
+### Files modified (2)
+
+`client/src/app/(auth)/layout.tsx` — the container was `max-w-sm`, which a 22-field form cannot
+use. Width now belongs to each page. `client/src/app/(auth)/login/page.tsx` — one class added so
+sign-in keeps exactly the column it had.
+
+### Form
+
+Every field comes from `registerCollegeSchema`; none was invented. Institution (name, code, type,
+year, affiliation, website, email, phone), address, and administrator (name, email, phone,
+designation, password, confirm) plus the terms checkbox — grouped into three sections.
+
+`zodResolver(registerCollegeSchema)` is the same schema the server validates against, so the rules
+cannot drift. Server `details[].field` paths map onto nested inputs, so a duplicate code lands on
+the code field rather than in a banner. `establishedYear` converts empty to `undefined` so the
+schema reports a required field rather than a type error on `NaN`.
+
+### Tests added (16) — client 504 → 520
+
+Renders · three sections · empty submission blocked · invalid email · password mismatch · terms
+required · posts to `/auth/register/college` · nested college/admin shape with `acceptTerms: true` ·
+success shows next steps and does **not** sign in · submit disabled while pending · **no double
+submit** · duplicate code on its own field · server error as a banner · unexpected failure not
+leaking the transport error · link back to sign in · nothing requested on load.
+
+### Verification
+
+```
+vitest (register)     PASS  16/16
+vitest (full client)  PASS  520/520, 32 files
+typecheck (client)    PASS  exit 0
+eslint (client)       PASS  0 warnings, 0 errors
+build:client          PASS  57 static pages — /register emitted at 6.12 kB
+git diff --check      PASS  exit 0
+jest (server)         PASS  613/613, 20/20 suites — unchanged, verified earlier this session
+```
+
+Static pages 56 → 57. The new route in the build output is the evidence the 404 is gone.
+
+### Percentages
+
+Unchanged. This restored an intended route rather than adding scope.
+
+```
+Overall ~85% · Backend ~88% · Frontend ~84%
+Core ~98% · Navigation ~92% · Permissions ~75%
+Production readiness: BLOCKED
+```
+
+---
+
+## Session 41 — Password reset flow (fixing the /forgot-password 404)
+
+Same class of gap as `/register`: `login/page.tsx:125` links to `/forgot-password`, and no page
+existed. **The backend was already complete.** No server file was touched.
+
+### The backend flow, read rather than assumed
+
+`resetPasswordSchema` requires **both** a `token` and an `otp`, which turned out to matter. The
+reset is deliberately two-factor:
+
+`AuthService.forgotPassword` returns silently for an unknown address (no enumeration), signs a
+password-reset JWT carrying a `jti` which is stored on the user so the link is single-use, emails a
+six-digit OTP, **and** emails a link to `${config.clientUrl}/reset-password?token=…`.
+
+`AuthService.resetPassword` verifies the token, checks the `jti` still matches, verifies the OTP
+separately with attempt counting, refuses reuse of a previous password, then in one transaction
+consumes the OTP, sets the password, clears the token id and **revokes every session** — because a
+reset is usually a response to compromise.
+
+The `/reset-password` route name is dictated by that `resetUrl`, not chosen here.
+
+### Files created (3)
+
+`client/src/app/(auth)/forgot-password/page.tsx` ·
+`client/src/app/(auth)/reset-password/page.tsx` ·
+`client/tests/password-reset-pages.test.tsx`
+
+### Files modified
+
+**None.** The `(auth)` layout already carried per-page widths after session 40.
+
+### Security decisions
+
+The success panel repeats the server's own wording — "If an account exists for…" — rather than
+softening it into a confirmation that the address was found. A test asserts the rendered page never
+says *found*, *no account*, or *does not exist*.
+
+The token goes from the query string into a registered hidden field and straight into the request
+body. It is never rendered, stored or logged; a test asserts the token string appears nowhere in
+the document. A link arriving with no token is refused up front rather than failing on submit.
+
+Rate limiting (`forgotPasswordRateLimit`) is untouched; its 429 surfaces as a banner.
+
+### Tests added (19) — client 520 → 539
+
+**Forgot password (10):** renders · email required · invalid email rejected client-side · posts to
+`/auth/forgot-password` with the exact body · submit disabled while sending · confirms **without
+revealing account existence** · rate limit surfaced · unexpected failure not leaking the transport
+error · link back to sign in.
+
+**Reset password (9):** renders with a token · refuses a link with no token · **never displays the
+token** · sends token + code + passwords exactly · mismatch rejected client-side · weak password
+rejected by the shared rules · invalid code lands on the code field · expired/reused link explained
+· success states that every device was signed out · submit disabled while resetting.
+
+### Verification
+
+```
+vitest (new suite)    PASS  19/19
+vitest (full client)  PASS  539/539, 33 files
+typecheck (client)    PASS  exit 0
+eslint (client)       PASS  0 warnings, 0 errors
+build:client          PASS  59 static pages
+git diff --check      PASS  exit 0
+jest (server)         NOT RUN — no server file changed; last verified 613/613, 20/20
+```
+
+All four auth routes now emit:
+
+```
+○ /forgot-password   3.70 kB
+○ /login             5.04 kB
+○ /register          6.12 kB
+○ /reset-password    4.25 kB
+```
+
+Static pages 57 → 59.
+
+### Percentages — unchanged
+
+Two intended routes were restored; no scope was added.
+
+```
+Overall ~85% · Backend ~88% · Frontend ~84%
+Core ~98% · Navigation ~92% · Permissions ~75%
+Production readiness: BLOCKED
+```
+
+---
+
+## Session 42 — /change-password, shared branding, and the safe dependency subset
+
+### The authentication route set is now complete
+
+`/change-password` was the last gap, and the worst of the three. `route-guard.tsx:36` redirects
+anyone with `mustChangePassword` there and lets only that path through — so with no page, an invited
+user landed on a 404 with **no way forward at all**. A lockout, not a cosmetic 404.
+
+```
+/login · /register · /forgot-password · /reset-password · /change-password
+```
+
+**Backend: existing, unchanged.** `PATCH /auth/change-password` already existed with
+`changePasswordSchema`, and `UserRepository.setPassword` already sets `mustChangePassword: false`.
+
+**The detail that mattered:** the server clears the flag, but the client still holds the session it
+bootstrapped with. Without `refreshUser()` before navigating, `RouteGuard` reads stale state and
+bounces the user straight back — a loop. The page refreshes first, then redirects via
+`homeRouteFor`. Tests assert the refresh happens and that no redirect ever targets
+`/change-password`.
+
+The page sits **outside** the `(auth)` group on purpose: that group is wrapped in `GuestGuard`,
+which ejects a signed-in user, and this page requires one. `RouteGuard` with no permissions gives it
+"signed in, nothing more". It also offers "Sign out instead" — the only exit for someone who cannot
+complete it.
+
+### Branding consolidated into one component
+
+`client/src/components/layout/brand-logo.tsx` — a single `<BrandLogo>` with `size`,
+`showWordmark` (for the collapsed rail) and `tone` (inverse for the dark panel). The mark and
+wordmark had been written out separately in `sidebar.tsx` and `(auth)/layout.tsx`, which is how two
+versions of a logo drift apart; both now render this component, as does the change-password page.
+Auth pages get it once from the layout rather than each carrying their own.
+
+**No logo artwork was supplied.** The brief said an image was attached; none arrived, and the
+repository has no `client/public` directory and no image asset of any kind. The component therefore
+renders the `GraduationCap` mark the product already used, with an explicit documented swap point —
+replacing it is a change to one `<Mark>` function plus dropping the file in `client/public/images/`.
+No placeholder artwork was invented.
+
+### Dependencies — the safe subset only
+
+```
+next       15.1.3 → 15.5.23   applied
+file-type  removed            zero references across all source, tests and configs
+exceljs    4.4.0              unchanged
+vitest     2.1.9              MIGRATION BLOCKED — not attempted
+npm audit  12 (6 mod, 4 high, 2 critical) → 11 (5 mod, 5 high, 1 critical)
+```
+
+**Why Vitest 4 remains blocked.** It ships Vite 7 with Rolldown, which replaced esbuild with oxc.
+`@vitejs/plugin-react` still emits `esbuild` options, so the JSX transform is silently discarded and
+every `.tsx` suite fails to parse with `RolldownError: Unexpected JSX expression`. Upgrading the
+plugin to 5.2.0 (peer range covers Vite 4–8) did **not** help. Going further means guessing at
+Rolldown/oxc config APIs. This needs its own scoped migration task; the repository is left entirely
+on the working configuration, not half-migrated.
+
+Remaining advisories and why they stand: `nodemailer` (high) is outside the approved plan;
+`postcss` and `sharp` (high) live inside Next's own tree and need Next 16, which is not approved;
+`uuid` (moderate) comes via exceljs and has no fix that is not a major downgrade; `esbuild`
+(moderate) is dev-only and tied to the blocked Vitest upgrade.
+
+### Tests added (18) — client 539 → 557
+
+Renders and explains why · brand shown · three schema fields · empty submission blocked · weak
+password rejected by the shared rules · mismatch rejected · new-password-equals-current rejected ·
+exact endpoint and body · **session refreshed so `mustChangePassword` clears** · redirect to the
+role's portal · **never redirects back to change-password** · submit disabled while pending · wrong
+current password on its own field · reuse rejection as a banner · unexpected failure not leaking the
+transport error · all fields masked · **no password value ever rendered as page text** · sign-out
+escape hatch.
+
+### A flakiness fix, not a weakening
+
+Five register tests began timing out at 5s — a different set each run, timeouts rather than
+assertion failures. The cause was my own helper typing 16 fields character-by-character. Fixed with
+`userEvent.setup({ delay: null })`; every assertion is unchanged.
+
+### Verification — all executed
+
+```
+vitest (change-password)  PASS  18/18
+vitest (register)         PASS  16/16
+vitest (full client)      PASS  557/557, 34 files
+typecheck (client)        PASS  exit 0
+typecheck (server)        PASS  exit 0
+eslint (client)           PASS  0 warnings, 0 errors
+build:client              PASS  60 static pages, compiled in 117s
+jest (server)             PASS  613/613, 20/20 suites, 1158.3s, exit 0
+git diff --check          PASS  exit 0
+```
+
+All five auth routes emit:
+
+```
+○ /change-password  7.58 kB   ○ /forgot-password  3.70 kB   ○ /login  5.04 kB
+○ /register         6.12 kB   ○ /reset-password   4.25 kB
+```
+
+### Percentages — unchanged
+
+A lockout was fixed, branding was consolidated, and two dependencies moved. No in-scope module
+shipped.
+
+```
+Overall ~85% · Backend ~88% · Frontend ~84%
+Core ~98% · Navigation ~92% · Permissions ~75%
+Production readiness: BLOCKED
+```

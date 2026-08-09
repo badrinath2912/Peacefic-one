@@ -10,6 +10,7 @@ import { departmentRoutes } from './department.routes';
 import { examinationRoutes } from './examination.routes';
 import { facultyRoutes } from './faculty.routes';
 import { fileRoutes } from './file.routes';
+import { notificationRoutes } from './notification.routes';
 import {
   applicationRoutes,
   companyRoutes,
@@ -65,6 +66,7 @@ export function registerV1Routes(): Router {
   router.use('/placements', placementRoutes());
   router.use('/interviews', interviewRoutes());
   router.use('/audit', auditRoutes());
+  router.use('/notifications', notificationRoutes());
   router.use('/files', fileRoutes());
 
   return router;
