@@ -109,6 +109,72 @@ describe('faculty API', () => {
     });
   });
 
+  describe('a head of department reads faculty in their own department', () => {
+    /**
+     * Both detail reads populate `departmentId`, so the scope guard was handed
+     * a Department document where it expected an id. It stringifies whatever it
+     * gets, so the lookup matched nothing and the head of their own department
+     * was refused their own staff.
+     *
+     * Nobody else could see it: `isCollegeWide()` short-circuits administrators
+     * and a placement officer returns early, so an HOD is the only role that
+     * reaches the comparison at all.
+     */
+    it('allows the detail and profile reads, and still refuses another department', async () => {
+      const created = await request(app)
+        .post(`${API}/faculty`)
+        .set(auth(tenant.token))
+        .send(facultyPayload(tenant, { email: 'own.dept@example.edu', employeeId: 'EMPOWN' }))
+        .expect(201);
+
+      const facultyId = created.body.data.id;
+
+      // The fixture makes this user head of `tenant.departmentId`, which is the
+      // department the faculty member above belongs to.
+      const hod = await createStaffUser(app, tenant, {
+        roleKey: ROLE_KEYS.HOD,
+        email: 'dept.head@example.edu',
+        employeeId: 'EMPHEAD',
+      });
+
+      const department = await DepartmentModel.findById(tenant.departmentId).exec();
+      expect(String(department?.hodId)).toBe(String(hod.userId));
+
+      await request(app).get(`${API}/faculty/${facultyId}`).set(auth(hod.token)).expect(200);
+
+      await request(app)
+        .get(`${API}/faculty/${facultyId}/profile`)
+        .set(auth(hod.token))
+        .expect(200);
+
+      // The guard must still bite: fixing the id must not turn it into a
+      // blanket allow. A head of one department cannot read another's staff.
+      const otherDepartment = await DepartmentModel.create({
+        collegeId: tenant.collegeId,
+        name: 'Mechanical Engineering',
+        code: 'MECH',
+        status: 'active',
+      });
+
+      const outsider = await request(app)
+        .post(`${API}/faculty`)
+        .set(auth(tenant.token))
+        .send(
+          facultyPayload(tenant, {
+            email: 'other.dept@example.edu',
+            employeeId: 'EMPOTHER',
+            departmentId: String(otherDepartment._id),
+          }),
+        )
+        .expect(201);
+
+      await request(app)
+        .get(`${API}/faculty/${outsider.body.data.id}`)
+        .set(auth(hod.token))
+        .expect(403);
+    });
+  });
+
   describe('privilege escalation', () => {
     it('stops an HOD assigning a role holding permissions they lack', async () => {
       const hod = await createStaffUser(app, tenant, {

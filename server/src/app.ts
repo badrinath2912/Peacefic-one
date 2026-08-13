@@ -11,11 +11,46 @@ import morgan from 'morgan';
 import { isDatabaseHealthy } from '@/config/database';
 import { config } from '@/config/env';
 import { httpLogStream, logger } from '@/config/logger';
-import { isRedisHealthy } from '@/config/redis';
 import { errorMiddleware, notFoundMiddleware } from '@/middleware/error.middleware';
 import { globalRateLimit } from '@/middleware/rate-limit.middleware';
 import { requestContextMiddleware } from '@/middleware/request-context.middleware';
 import { registerV1Routes } from '@/routes/v1';
+
+/**
+ * True for `localhost` and the three RFC 1918 ranges, on any port.
+ *
+ * Used only outside production, to spare developers from re-listing a LAN
+ * address every time DHCP hands out a new one. It is deliberately strict about
+ * the 172.16/12 block — `172.32.x.x` is public and must not match — and it
+ * accepts http/https only, so `file://` and custom schemes are still refused.
+ */
+export function isPrivateNetworkOrigin(origin: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false;
+  }
+
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+
+  const host = url.hostname;
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return true;
+
+  const octets = host.split('.');
+  if (octets.length !== 4) return false;
+
+  const parsed = octets.map((part) => (/^\d{1,3}$/.test(part) ? Number(part) : Number.NaN));
+  const a = parsed[0] ?? Number.NaN;
+  const b = parsed[1] ?? Number.NaN;
+  if (Number.isNaN(a) || Number.isNaN(b) || a > 255 || b > 255) return false;
+
+  if (a === 10) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+
+  return false;
+}
 
 export function createApp(): Application {
   const app = express();
@@ -63,6 +98,14 @@ export function createApp(): Application {
           callback(null, true);
           return;
         }
+        // Outside production, allow the machine's own LAN address so the app can
+        // be opened from a phone or a second laptop without re-listing an IP
+        // that DHCP changes anyway. Production is unaffected: `CORS_ORIGINS` is
+        // mandatory there, and this branch cannot run.
+        if (!config.isProduction && isPrivateNetworkOrigin(origin)) {
+          callback(null, true);
+          return;
+        }
         logger.warn('Blocked CORS origin', { origin });
         callback(new Error('Not allowed by CORS'));
       },
@@ -96,12 +139,11 @@ export function createApp(): Application {
   });
 
   app.get('/health/ready', (_req: Request, res: Response) => {
+    // MongoDB is the only external dependency the API cannot serve without.
     const database = isDatabaseHealthy();
-    const redis = isRedisHealthy();
-    const ready = database && redis;
-    res.status(ready ? 200 : 503).json({
-      status: ready ? 'ready' : 'degraded',
-      checks: { database, redis },
+    res.status(database ? 200 : 503).json({
+      status: database ? 'ready' : 'degraded',
+      checks: { database },
     });
   });
 

@@ -73,7 +73,21 @@ export class AttendanceService {
 
   async getSession(id: string): Promise<AttendanceSessionDocument> {
     const session = await this.sessionRepository.findByIdOrFail(id, { include: 'batchId' });
-    await this.scopeGuard.assertCanAccessBatch(session.batchId);
+
+    /**
+     * `include: 'batchId'` populates the relation, so `session.batchId` is a
+     * Batch *document* here, not an id. The scope guard stringifies whatever it
+     * is given, so passing the document produced a mangled id, its own lookup
+     * returned null, and the caller was refused.
+     *
+     * That was invisible for most roles: `isCollegeWide()` short-circuits for
+     * college and platform administrators, and faculty reach marking through
+     * `createSession`, which passes a raw id. A head of department was the only
+     * role that reached the comparison on a read — so only they saw a 403.
+     */
+    const batchId = (session.batchId as { _id?: mongoose.Types.ObjectId })?._id ?? session.batchId;
+    await this.scopeGuard.assertCanAccessBatch(batchId);
+
     return session;
   }
 

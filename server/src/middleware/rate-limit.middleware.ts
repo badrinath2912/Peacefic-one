@@ -1,28 +1,29 @@
-import rateLimit, { type Options, type RateLimitRequestHandler } from 'express-rate-limit';
-import RedisStore from 'rate-limit-redis';
+import rateLimit, { type RateLimitRequestHandler } from 'express-rate-limit';
 
 import { config } from '@/config/env';
-import { getRedis } from '@/config/redis';
 import { requestContext } from '@/config/request-context';
 import { RateLimitError } from '@/errors';
 
-/** Redis-backed so limits hold across instances; falls back to memory locally. */
-function createStore(prefix: string): Options['store'] | undefined {
-  const redis = getRedis();
-  if (!redis) return undefined;
-  return new RedisStore({
-    prefix: `rl:${prefix}:`,
-    sendCommand: (...args: string[]) => redis.call(...(args as [string, ...string[]])) as Promise<never>,
-  });
-}
-
-function build(name: string, windowMs: number, max: number, keyBy: 'ip' | 'user' | 'email' = 'ip') {
+/**
+ * Counters live in this process's memory.
+ *
+ * The trade-off, stated plainly: limits are **per instance**, not global. One
+ * API process enforces exactly what is configured here; behind N processes an
+ * attacker gets N times the budget, because nothing is shared between them.
+ * That is acceptable for a single-instance deployment and is the reason the
+ * login limiter keys on the email as well as the IP — the email key at least
+ * narrows credential stuffing aimed at one account within each instance.
+ *
+ * Restarting the process clears every counter, so a limit is not a durable
+ * lockout. Account lockout after repeated failures is enforced separately, in
+ * the auth service against the database, and does survive a restart.
+ */
+function build(_name: string, windowMs: number, max: number, keyBy: 'ip' | 'user' | 'email' = 'ip') {
   return rateLimit({
     windowMs,
     max,
     standardHeaders: true,
     legacyHeaders: false,
-    store: createStore(name),
     skip: () => config.isTest,
     keyGenerator: (req) => {
       if (keyBy === 'user') {
@@ -43,6 +44,24 @@ function build(name: string, windowMs: number, max: number, keyBy: 'ip' | 'user'
 const FIFTEEN_MINUTES = 15 * 60 * 1000;
 const ONE_HOUR = 60 * 60 * 1000;
 
+/**
+ * Development gets a far larger budget on the account-creating and code-sending
+ * endpoints.
+ *
+ * Production values are chosen against abuse: three registrations an hour from
+ * one address is generous for real users and hostile to bulk signup. Those same
+ * three make local work almost impossible, because building and testing a
+ * registration flow means running it repeatedly from one machine — and with the
+ * in-memory store, the only way to clear a tripped counter is to restart the
+ * server.
+ *
+ * The multiplier applies **only** outside production, so the deployed limits are
+ * exactly what they were. It does not touch login: brute-force protection stays
+ * identical everywhere, because a weak login limit in development is a habit
+ * that ships.
+ */
+const ABUSE_BUDGET = config.isProduction ? 1 : 20;
+
 export const globalRateLimit: RateLimitRequestHandler = build(
   'global',
   config.security.rateLimitWindowMs,
@@ -61,14 +80,23 @@ export const loginEmailRateLimit: RateLimitRequestHandler = build(
   'email',
 );
 
-export const registerRateLimit: RateLimitRequestHandler = build('register', ONE_HOUR, 3);
+export const registerRateLimit: RateLimitRequestHandler = build(
+  'register',
+  ONE_HOUR,
+  3 * ABUSE_BUDGET,
+);
 export const forgotPasswordRateLimit: RateLimitRequestHandler = build(
   'forgot',
   ONE_HOUR,
-  3,
+  3 * ABUSE_BUDGET,
   'email',
 );
-export const otpRateLimit: RateLimitRequestHandler = build('otp', FIFTEEN_MINUTES, 3, 'email');
+export const otpRateLimit: RateLimitRequestHandler = build(
+  'otp',
+  FIFTEEN_MINUTES,
+  3 * ABUSE_BUDGET,
+  'email',
+);
 export const uploadRateLimit: RateLimitRequestHandler = build('upload', ONE_HOUR, 20, 'user');
 export const importRateLimit: RateLimitRequestHandler = build('import', ONE_HOUR, 5, 'user');
 export const exportRateLimit: RateLimitRequestHandler = build('export', ONE_HOUR, 10, 'user');

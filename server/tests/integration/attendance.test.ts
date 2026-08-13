@@ -1,9 +1,11 @@
 import { ROLE_KEYS } from '@peacefic/shared';
+import mongoose from 'mongoose';
 import request from 'supertest';
 
 import { AttendanceRecordModel } from '@/models/attendance-record.model';
 import { AttendanceSummaryModel } from '@/models/attendance-summary.model';
 import { CollegeModel } from '@/models/college.model';
+import { DepartmentModel } from '@/models/department.model';
 import { NotificationModel } from '@/models/notification.model';
 import { StudentModel } from '@/models/student.model';
 import { UserModel } from '@/models/user.model';
@@ -17,10 +19,21 @@ const API = '/api/v1';
 describe('attendance API', () => {
   const app = testApp();
   let tenant: TenantFixture;
+  let marker: { token: string; userId: string; facultyId: string | null };
 
   beforeEach(async () => {
     await seedReferenceData();
     tenant = await createTenant(app);
+    // Attendance is recorded by whoever runs the session. The college admin
+    // oversees it and keeps override_lock, but no longer marks or corrects —
+    // so write calls below authenticate as a faculty member.
+    marker = await createStaffUser(app, tenant, {
+      roleKey: ROLE_KEYS.FACULTY,
+      email: 'attendance.marker@example.edu',
+      // Faculty are scoped to their assigned batches by the scope guard, so a
+      // marker with none would be refused the batch rather than the permission.
+      assignedBatchIds: [tenant.batchId],
+    });
   });
 
   const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
@@ -52,7 +65,7 @@ describe('attendance API', () => {
   async function createSession(overrides: Record<string, unknown> = {}): Promise<string> {
     const response = await request(app)
       .post(`${API}/attendance/sessions`)
-      .set(auth(tenant.token))
+      .set(auth(marker.token))
       .send({
         batchId: tenant.batchId,
         date: yesterday(),
@@ -85,7 +98,7 @@ describe('attendance API', () => {
 
       const response = await request(app)
         .post(`${API}/attendance/sessions`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({
           batchId: tenant.batchId,
           date: tomorrow,
@@ -102,7 +115,7 @@ describe('attendance API', () => {
 
       const response = await request(app)
         .post(`${API}/attendance/sessions`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({
           batchId: tenant.batchId,
           date: yesterday(),
@@ -136,7 +149,7 @@ describe('attendance API', () => {
 
       const response = await request(app)
         .post(`${API}/attendance/sessions/${sessionId}/mark`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({
           entries: [
             { studentId: students[0], status: 'present' },
@@ -169,13 +182,13 @@ describe('attendance API', () => {
 
       await request(app)
         .post(`${API}/attendance/sessions/${sessionId}/mark`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send(body)
         .expect(200);
 
       const corrected = await request(app)
         .post(`${API}/attendance/sessions/${sessionId}/mark`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({
           entries: [
             { studentId: students[0], status: 'present' },
@@ -196,7 +209,7 @@ describe('attendance API', () => {
 
       const response = await request(app)
         .post(`${API}/attendance/sessions/${sessionId}/mark`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({
           entries: [
             { studentId: students[0], status: 'present' },
@@ -214,7 +227,7 @@ describe('attendance API', () => {
 
       const response = await request(app)
         .post(`${API}/attendance/sessions/${sessionId}/mark`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({
           entries: [
             { studentId: students[0], status: 'present' },
@@ -232,7 +245,7 @@ describe('attendance API', () => {
 
       await request(app)
         .post(`${API}/attendance/sessions/${sessionId}/mark`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({
           entries: [
             { studentId: students[0], status: 'present' },
@@ -257,7 +270,7 @@ describe('attendance API', () => {
 
       await request(app)
         .post(`${API}/attendance/sessions/${sessionId}/mark`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({ entries: [{ studentId: students[0], status: 'absent' }] })
         .expect(200);
 
@@ -275,7 +288,7 @@ describe('attendance API', () => {
 
       await request(app)
         .post(`${API}/attendance/sessions/${sessionId}/mark`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({ entries: [{ studentId: students[0], status: 'present' }] })
         .expect(200);
 
@@ -296,13 +309,13 @@ describe('attendance API', () => {
 
       await request(app)
         .post(`${API}/attendance/sessions/${first}/mark`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({ entries: [{ studentId: students[0], status: 'present' }] })
         .expect(200);
 
       await request(app)
         .post(`${API}/attendance/sessions/${second}/mark`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({ entries: [{ studentId: students[0], status: 'absent' }] })
         .expect(200);
 
@@ -320,7 +333,7 @@ describe('attendance API', () => {
 
       await request(app)
         .post(`${API}/attendance/sessions/${sessionId}/mark`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({
           entries: [{ studentId: students[0], status: 'present' }],
           lockAfterMarking: true,
@@ -329,7 +342,7 @@ describe('attendance API', () => {
 
       const response = await request(app)
         .post(`${API}/attendance/sessions/${sessionId}/mark`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({ entries: [{ studentId: students[0], status: 'absent' }] })
         .expect(422);
 
@@ -342,7 +355,7 @@ describe('attendance API', () => {
 
       await request(app)
         .post(`${API}/attendance/sessions/${sessionId}/mark`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({ entries: [{ studentId: students[0], status: 'absent' }] })
         .expect(200);
 
@@ -350,7 +363,7 @@ describe('attendance API', () => {
 
       const response = await request(app)
         .patch(`${API}/attendance/sessions/${sessionId}/records/${record?._id}`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({ status: 'present', reason: 'Student produced a medical certificate' })
         .expect(200);
 
@@ -365,7 +378,7 @@ describe('attendance API', () => {
 
       await request(app)
         .post(`${API}/attendance/sessions/${sessionId}/mark`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({
           entries: [{ studentId: students[0], status: 'present' }],
           lockAfterMarking: true,
@@ -417,7 +430,7 @@ describe('attendance API', () => {
 
       const response = await request(app)
         .post(`${API}/attendance/sessions`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({
           batchId: tenant.batchId,
           date: yesterday(),
@@ -439,7 +452,7 @@ describe('attendance API', () => {
       // Without context in the unique index this would be a duplicate.
       await request(app)
         .post(`${API}/attendance/sessions`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({
           batchId: tenant.batchId,
           date: yesterday(),
@@ -455,7 +468,7 @@ describe('attendance API', () => {
     it('still refuses a duplicate within the same context', async () => {
       await request(app)
         .post(`${API}/attendance/sessions`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({
           batchId: tenant.batchId,
           date: yesterday(),
@@ -468,7 +481,7 @@ describe('attendance API', () => {
 
       await request(app)
         .post(`${API}/attendance/sessions`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({
           batchId: tenant.batchId,
           date: yesterday(),
@@ -485,7 +498,7 @@ describe('attendance API', () => {
 
       await request(app)
         .post(`${API}/attendance/sessions`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({
           batchId: tenant.batchId,
           date: yesterday(),
@@ -511,7 +524,7 @@ describe('attendance API', () => {
 
       const created = await request(app)
         .post(`${API}/attendance/sessions`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({
           batchId: tenant.batchId,
           date: yesterday(),
@@ -525,7 +538,7 @@ describe('attendance API', () => {
       // One set of marking rules, whatever the context.
       const marked = await request(app)
         .post(`${API}/attendance/sessions/${created.body.data.id}/mark`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({
           entries: [
             { studentId: students[0], status: 'present' },
@@ -583,7 +596,7 @@ describe('attendance API', () => {
 
       await request(app)
         .post(`${API}/attendance/sessions/${sessionId}/mark`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({
           entries: [
             { studentId: students[0], status: 'present' },
@@ -609,7 +622,7 @@ describe('attendance API', () => {
 
       await request(app)
         .post(`${API}/attendance/sessions/${sessionId}/mark`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({
           entries: [
             { studentId: students[0], status: 'absent' },
@@ -654,7 +667,7 @@ describe('attendance API', () => {
 
       await request(app)
         .post(`${API}/attendance/sessions/${sessionId}/mark`)
-        .set(auth(tenant.token))
+        .set(auth(marker.token))
         .send({ entries: [{ studentId: students[0], status: 'present' }] })
         .expect(200);
 
@@ -721,6 +734,168 @@ describe('attendance API', () => {
         .expect(200);
 
       expect(response.body.data).toHaveLength(0);
+    });
+  });
+
+  /* ============================ authorization ============================= */
+  /**
+   * The split this suite now encodes: **reading is not marking**.
+   *
+   * `attendance:mark` was narrowed to the people who actually run sessions —
+   * faculty and trainers. A college administrator and a head of department keep
+   * `attendance:read`/`read_all` for oversight, and the administrator keeps
+   * `attendance:override_lock` as a correction path.
+   *
+   * The sheet endpoint was gated on `mark`, which made read-only roles blind to
+   * a register they are explicitly allowed to review. These tests hold both
+   * halves of the line: read is permitted, marking is not.
+   */
+  describe('read and write are separately authorized', () => {
+    it('lets a college administrator read a sheet without marking rights', async () => {
+      await createStudents(1);
+      const sessionId = await createSession();
+
+      await request(app)
+        .get(`${API}/attendance/sessions/${sessionId}/sheet`)
+        .set(auth(tenant.token))
+        .expect(200);
+    });
+
+    it('lets a head of department read a sheet', async () => {
+      await createStudents(1);
+      const sessionId = await createSession();
+
+      const hod = await createStaffUser(app, tenant, {
+        roleKey: ROLE_KEYS.HOD,
+        email: 'hod.attendance@example.edu',
+      });
+
+      /**
+       * HOD scope resolves through `departmentRepository.findByHod(userId)`,
+       * which matches on `Department.hodId` — not on the faculty record's
+       * `departmentId`, and not on `assignedBatchIds`. If this assertion fails
+       * the fixture never linked the department, and the 403 is a test-setup
+       * fault; if it passes, the break is downstream in the repository filter
+       * or the scope guard.
+       */
+      const department = await DepartmentModel.findById(tenant.departmentId).exec();
+      expect(String(department?.hodId)).toBe(String(hod.userId));
+
+      await request(app)
+        .get(`${API}/attendance/sessions/${sessionId}/sheet`)
+        .set(auth(hod.token))
+        .expect(200);
+    });
+
+    /**
+     * The other half of the same guarantee: restoring HOD access must not have
+     * widened it. A head of one department has no business reading a register
+     * for a batch in another.
+     */
+    it('refuses a head of department a batch outside their own department', async () => {
+      const otherDepartment = await DepartmentModel.create({
+        collegeId: new mongoose.Types.ObjectId(tenant.collegeId),
+        name: 'Mechanical Engineering',
+        code: 'MECH',
+        status: 'active',
+      });
+
+      // Heads the *other* department, not the one owning the session's batch.
+      const outsideHod = await createStaffUser(app, tenant, {
+        roleKey: ROLE_KEYS.HOD,
+        email: 'hod.mech@example.edu',
+        departmentId: String(otherDepartment._id),
+      });
+
+      await createStudents(1);
+      const sessionId = await createSession();
+
+      await request(app)
+        .get(`${API}/attendance/sessions/${sessionId}/sheet`)
+        .set(auth(outsideHod.token))
+        .expect(403);
+    });
+
+    /** The defect this guards: reading must not imply marking. */
+    it('refuses a college administrator the ability to mark', async () => {
+      const students = await createStudents(1);
+      const sessionId = await createSession();
+
+      await request(app)
+        .post(`${API}/attendance/sessions/${sessionId}/mark`)
+        .set(auth(tenant.token))
+        .send({ entries: [{ studentId: students[0], status: 'present' }] })
+        .expect(403);
+
+      expect(await AttendanceRecordModel.countDocuments({})).toBe(0);
+    });
+
+    it('lets faculty holding attendance:mark mark the register', async () => {
+      const students = await createStudents(1);
+      const sessionId = await createSession();
+
+      await request(app)
+        .post(`${API}/attendance/sessions/${sessionId}/mark`)
+        .set(auth(marker.token))
+        .send({ entries: [{ studentId: students[0], status: 'present' }] })
+        .expect(200);
+    });
+
+    it('refuses a student both the sheet and the register', async () => {
+      await createStudents(1);
+      const sessionId = await createSession();
+
+      const student = await createStaffUser(app, tenant, {
+        roleKey: ROLE_KEYS.STUDENT,
+        email: 'student.attendance@example.edu',
+      });
+
+      await request(app)
+        .get(`${API}/attendance/sessions/${sessionId}/sheet`)
+        .set(auth(student.token))
+        .expect(403);
+
+      await request(app)
+        .post(`${API}/attendance/sessions/${sessionId}/mark`)
+        .set(auth(student.token))
+        .send({ entries: [] })
+        .expect(403);
+    });
+
+    it('refuses an unauthenticated caller', async () => {
+      const sessionId = await createSession();
+
+      await request(app).get(`${API}/attendance/sessions/${sessionId}/sheet`).expect(401);
+    });
+
+    /**
+     * The literal string `new` reaches this route only when the client has no
+     * static `/new` segment — which is exactly the bug that produced a 400 in
+     * the college portal. It must never be read as an identifier.
+     */
+    it('rejects a non-ObjectId session id rather than treating it as one', async () => {
+      await request(app)
+        .get(`${API}/attendance/sessions/new/sheet`)
+        .set(auth(tenant.token))
+        .expect(400);
+    });
+
+    it('answers 404 for a well-formed id that does not exist', async () => {
+      await request(app)
+        .get(`${API}/attendance/sessions/60f0000000000000000000aa/sheet`)
+        .set(auth(tenant.token))
+        .expect(404);
+    });
+
+    /** Another college's session is invisible, not merely forbidden. */
+    it('hides a session belonging to another college', async () => {
+      const sessionId = await createSession();
+      const other = await createTenant(app, { code: 'ZZZ', adminEmail: 'admin.zzz@example.edu' });
+
+      await request(app)
+        .get(`${API}/attendance/sessions/${sessionId}/sheet`)
+        .set(auth(other.token))
+        .expect(404);
     });
   });
 });

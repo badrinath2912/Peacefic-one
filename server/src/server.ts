@@ -4,11 +4,9 @@ import { createApp } from '@/app';
 import { connectDatabase, disconnectDatabase } from '@/config/database';
 import { config } from '@/config/env';
 import { logger } from '@/config/logger';
-import { connectRedis, disconnectRedis } from '@/config/redis';
 
 async function bootstrap(): Promise<void> {
   await connectDatabase();
-  await connectRedis();
 
   const app = createApp();
   const server = http.createServer(app);
@@ -32,7 +30,6 @@ async function bootstrap(): Promise<void> {
     server.close(async () => {
       try {
         await disconnectDatabase();
-        await disconnectRedis();
         logger.info('Shutdown complete');
         process.exit(0);
       } catch (error) {

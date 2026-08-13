@@ -35,6 +35,7 @@ describe('examination API', () => {
   const app = testApp();
   let tenant: TenantFixture;
   let courseId: string;
+  let invigilator: { token: string; userId: string; facultyId: string | null };
 
   const auth = (token: string) => ({ Authorization: `Bearer ${token}` });
 
@@ -42,6 +43,19 @@ describe('examination API', () => {
     await seedReferenceData();
     tenant = await createTenant(app);
     courseId = await createCourse();
+
+    /**
+     * Recording who sat an exam needs `attendance:mark`, which only faculty and
+     * trainers hold — a college administrator runs the examination office but
+     * does not invigilate. The batch assignment matters too: the scope guard
+     * limits faculty to their own batches, so an unassigned invigilator would
+     * be refused the batch rather than the permission.
+     */
+    invigilator = await createStaffUser(app, tenant, {
+      roleKey: ROLE_KEYS.FACULTY,
+      email: 'exam.invigilator@example.edu',
+      assignedBatchIds: [tenant.batchId],
+    });
   });
 
   /* --------------------------------- helpers -------------------------------- */
@@ -170,7 +184,7 @@ describe('examination API', () => {
 
     await request(app)
       .post(`${API}/examinations/${examId}/attendance`)
-      .set(auth(tenant.token))
+      .set(auth(invigilator.token))
       .send({ entries: [{ studentId, status: 'present' }] })
       .expect(200);
 
@@ -429,7 +443,7 @@ describe('examination API', () => {
 
       await request(app)
         .post(`${API}/examinations/${examId}/attendance`)
-        .set(auth(tenant.token))
+        .set(auth(invigilator.token))
         .send({ entries: [{ studentId, status: 'present' }] })
         .expect(200);
 
@@ -604,7 +618,7 @@ describe('examination API', () => {
 
       await request(app)
         .post(`${API}/examinations/${examId}/attendance`)
-        .set(auth(tenant.token))
+        .set(auth(invigilator.token))
         .send({ entries: [{ studentId, status: 'present' }] })
         .expect(200);
 
@@ -658,7 +672,7 @@ describe('examination API', () => {
 
       await request(app)
         .post(`${API}/examinations/${examId}/attendance`)
-        .set(auth(tenant.token))
+        .set(auth(invigilator.token))
         .send({ entries: [{ studentId, status: 'malpractice', remarks: 'Caught copying' }] })
         .expect(200);
 
@@ -778,7 +792,7 @@ describe('examination API', () => {
 
       await request(app)
         .post(`${API}/examinations/${examId}/attendance`)
-        .set(auth(tenant.token))
+        .set(auth(invigilator.token))
         .send({
           entries: [
             { studentId: first, status: 'present' },
@@ -841,7 +855,7 @@ describe('examination API', () => {
 
       await request(app)
         .post(`${API}/examinations/${examId}/attendance`)
-        .set(auth(tenant.token))
+        .set(auth(invigilator.token))
         .send({ entries: [{ studentId, status: 'present' }] })
         .expect(200);
 
@@ -1196,7 +1210,7 @@ describe('examination API', () => {
 
       await request(app)
         .post(`${API}/examinations/${examId}/attendance`)
-        .set(auth(tenant.token))
+        .set(auth(invigilator.token))
         .send({ entries: [{ studentId, status: 'present' }] })
         .expect(200);
 
@@ -1257,7 +1271,7 @@ describe('examination API', () => {
 
       await request(app)
         .post(`${API}/examinations/${examId}/attendance`)
-        .set(auth(tenant.token))
+        .set(auth(invigilator.token))
         .send({ entries: [{ studentId, status: 'present' }] })
         .expect(200);
 
@@ -1703,7 +1717,7 @@ describe('examination API', () => {
 
       await request(app)
         .post(`${API}/examinations/${examId}/attendance`)
-        .set(auth(tenant.token))
+        .set(auth(invigilator.token))
         .send({
           entries: [
             { studentId: first, status: 'present' },
@@ -2096,6 +2110,124 @@ describe('examination API', () => {
         .get(`${API}/examinations/${foreignId}/papers`)
         .set(auth(token))
         .expect(404);
+    });
+
+    /* --------------------- registrations, analytics, export -------------------- */
+
+    /**
+     * `exam:read` is held by students as well as staff. These three endpoints
+     * were gated on it alone, so a student could enumerate the cohort, read
+     * institution-wide analytics, and export the exam list.
+     */
+    it('gives a student only their own registration row', async () => {
+      const { examId, studentId } = await publishedExamWithStudent();
+
+      const otherId = await createStudent({
+        email: 'second.student@example.edu',
+        rollNumber: 'CS22B002',
+        firstName: 'Arun',
+      });
+
+      await request(app)
+        .post(`${API}/examinations/${examId}/registrations`)
+        .set(auth(tenant.token))
+        .send({ studentIds: [otherId] })
+        .expect(201);
+
+      const { token } = await signInStudent();
+
+      const response = await request(app)
+        .get(`${API}/examinations/${examId}/registrations`)
+        .set(auth(token))
+        .expect(200);
+
+      expect(response.body.data).toHaveLength(1);
+      expect(String(response.body.data[0].studentId?.id ?? response.body.data[0].studentId)).toBe(
+        studentId,
+      );
+
+      // The classmate must appear nowhere in the payload.
+      expect(JSON.stringify(response.body)).not.toContain('CS22B002');
+      expect(JSON.stringify(response.body)).not.toContain('Arun');
+    });
+
+    /** The scope is applied after the caller's filter, so it cannot be widened. */
+    it('does not let a student filter their way to another registration', async () => {
+      const { examId } = await publishedExamWithStudent();
+
+      const otherId = await createStudent({
+        email: 'second.student@example.edu',
+        rollNumber: 'CS22B002',
+        firstName: 'Arun',
+      });
+
+      await request(app)
+        .post(`${API}/examinations/${examId}/registrations`)
+        .set(auth(tenant.token))
+        .send({ studentIds: [otherId] })
+        .expect(201);
+
+      const { token } = await signInStudent();
+
+      const response = await request(app)
+        .get(`${API}/examinations/${examId}/registrations?studentId=${otherId}`)
+        .set(auth(token))
+        .expect(200);
+
+      expect(JSON.stringify(response.body)).not.toContain('CS22B002');
+    });
+
+    it('gives staff the whole registration roster', async () => {
+      const { examId } = await publishedExamWithStudent();
+
+      const otherId = await createStudent({
+        email: 'second.student@example.edu',
+        rollNumber: 'CS22B002',
+        firstName: 'Arun',
+      });
+
+      await request(app)
+        .post(`${API}/examinations/${examId}/registrations`)
+        .set(auth(tenant.token))
+        .send({ studentIds: [otherId] })
+        .expect(201);
+
+      const response = await request(app)
+        .get(`${API}/examinations/${examId}/registrations`)
+        .set(auth(tenant.token))
+        .expect(200);
+
+      expect(response.body.data).toHaveLength(2);
+    });
+
+    it('refuses a student the examination analytics', async () => {
+      await publishedExamWithStudent();
+      const { token } = await signInStudent();
+
+      await request(app).get(`${API}/examinations/analytics`).set(auth(token)).expect(403);
+    });
+
+    it('refuses a student the bulk export', async () => {
+      await publishedExamWithStudent();
+      const { token } = await signInStudent();
+
+      await request(app)
+        .post(`${API}/examinations/bulk/export`)
+        .set(auth(token))
+        .send({})
+        .expect(403);
+    });
+
+    it('leaves staff analytics and export working', async () => {
+      await publishedExamWithStudent();
+
+      await request(app).get(`${API}/examinations/analytics`).set(auth(tenant.token)).expect(200);
+
+      await request(app)
+        .post(`${API}/examinations/bulk/export`)
+        .set(auth(tenant.token))
+        .send({})
+        .expect(200);
     });
 
     it('still refuses a caller with no exam permission', async () => {

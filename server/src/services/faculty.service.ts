@@ -56,6 +56,23 @@ const DANGEROUS_PERMISSIONS = new Set(
   PERMISSION_DEFINITIONS.filter((permission) => permission.isDangerous).map((p) => p.key),
 );
 
+/**
+ * The department id, whether or not the relation was populated.
+ *
+ * A read that passes `include: 'departmentId'` gets a Department document back
+ * on that field; one that does not gets a raw id. Both reach the scope guard,
+ * which needs the id either way.
+ */
+function departmentIdOf(faculty: FacultyDocument): mongoose.Types.ObjectId {
+  const departmentId = faculty.departmentId as
+    | mongoose.Types.ObjectId
+    | { _id?: mongoose.Types.ObjectId };
+
+  return '_id' in departmentId && departmentId._id
+    ? departmentId._id
+    : (departmentId as mongoose.Types.ObjectId);
+}
+
 export class FacultyService {
   constructor(
     private readonly facultyRepository: FacultyRepository,
@@ -91,7 +108,18 @@ export class FacultyService {
     const faculty = await this.facultyRepository.findByIdOrFail(id, {
       include: 'userId,departmentId,assignedBatchIds',
     });
-    await this.scopeGuard.assertCanAccessDepartment(faculty.departmentId);
+
+    /**
+     * `include` populates the relation, so `departmentId` is a Department
+     * *document* here, not an id. The scope guard stringifies whatever it is
+     * given, so passing the document produced a mangled id that matched no
+     * department and the caller was refused.
+     *
+     * Only a head of department ever saw it: `isCollegeWide()` short-circuits
+     * administrators and a placement officer returns early, so they never
+     * reach the comparison. Same defect as `AttendanceService.getSession`.
+     */
+    await this.scopeGuard.assertCanAccessDepartment(departmentIdOf(faculty));
     return faculty;
   }
 
@@ -388,7 +416,8 @@ export class FacultyService {
     const faculty = await this.facultyRepository.findByIdOrFail(id, {
       include: 'userId,departmentId,assignedBatchIds',
     });
-    await this.scopeGuard.assertCanAccessDepartment(faculty.departmentId);
+    // Populated relation, not an id — see `getById`.
+    await this.scopeGuard.assertCanAccessDepartment(departmentIdOf(faculty));
 
     const [user, batches, compliance, activity, headsOf] = await Promise.all([
       this.userRepository.findById(faculty.userId),
