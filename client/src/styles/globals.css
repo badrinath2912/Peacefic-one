@@ -59,31 +59,31 @@
   }
 
   .dark {
-    --background: 222 47% 7%;
-    --foreground: 210 20% 96%;
+    --background: 220 40% 3%;
+    --foreground: 0 0% 100%;
 
-    --surface: 222 44% 10%;
-    --surface-raised: 222 40% 13%;
-    --surface-sunken: 222 47% 6%;
+    --surface: 220 33% 6%;
+    --surface-raised: 220 30% 9%;
+    --surface-sunken: 220 42% 2%;
 
-    --card: 222 44% 10%;
+    --card: 220 33% 6%;
     --card-foreground: 210 20% 96%;
 
-    --popover: 222 40% 13%;
+    --popover: 220 30% 9%;
     --popover-foreground: 210 20% 96%;
 
-    /* Lifted and slightly desaturated: the light-mode blue vibrates badly on
-       a dark surface. */
-    --primary: 217 91% 62%;
-    --primary-hover: 217 91% 68%;
-    --primary-foreground: 222 47% 8%;
-    --primary-subtle: 221 60% 18%;
+    /* Electric blue, brighter and more saturated than the light-mode value: on
+       a near-black ground a mid blue reads as grey rather than as an accent. */
+    --primary: 210 100% 55%;
+    --primary-hover: 210 100% 62%;
+    --primary-foreground: 0 0% 100%;
+    --primary-subtle: 210 90% 12%;
 
     --secondary: 217 33% 17%;
     --secondary-foreground: 210 20% 96%;
 
     --muted: 217 33% 17%;
-    --muted-foreground: 215 20% 65%;
+    --muted-foreground: 215 14% 58%;
 
     --accent: 217 33% 20%;
     --accent-foreground: 210 20% 96%;
@@ -104,9 +104,9 @@
     --info-foreground: 222 47% 8%;
     --info-subtle: 199 50% 17%;
 
-    --border: 217 33% 20%;
-    --input: 217 33% 24%;
-    --ring: 217 91% 62%;
+    --border: 215 25% 16%;
+    --input: 215 25% 20%;
+    --ring: 210 100% 55%;
   }
 }
 
@@ -139,6 +139,91 @@
 }
 
 @layer components {
+  /**
+   * Semantic typography scale.
+   *
+   * Added as opt-in classes rather than element selectors, so nothing already
+   * written changes appearance until a page chooses a level. The existing
+   * utility-first styling across the app stays valid; this gives later phases
+   * one vocabulary to converge on instead of re-deriving sizes per page.
+   *
+   * Display and h1 scale with the viewport because they carry editorial weight
+   * on wide screens and would otherwise crowd a 320px device. Everything from
+   * h2 down is fixed: body text that resizes with the viewport is harder to
+   * read, not easier.
+   */
+  .type-display {
+    @apply text-4xl font-semibold leading-[1.1] tracking-tight sm:text-5xl lg:text-6xl;
+  }
+
+  .type-h1 {
+    @apply text-2xl font-semibold leading-tight tracking-tight sm:text-3xl lg:text-4xl;
+  }
+
+  .type-h2 {
+    @apply text-xl font-semibold leading-snug tracking-tight sm:text-2xl;
+  }
+
+  .type-h3 {
+    @apply text-lg font-semibold leading-snug tracking-tight;
+  }
+
+  .type-h4 {
+    @apply text-base font-semibold leading-snug;
+  }
+
+  .type-body-lg {
+    @apply text-base leading-relaxed sm:text-lg;
+  }
+
+  .type-body {
+    @apply text-sm leading-relaxed sm:text-base;
+  }
+
+  .type-body-sm {
+    @apply text-sm leading-relaxed;
+  }
+
+  .type-caption {
+    @apply text-xs leading-normal text-muted-foreground;
+  }
+
+  .type-label {
+    @apply text-sm font-medium leading-none;
+  }
+
+  /** Small, spaced capitals used to label a section above its heading. */
+  .type-overline {
+    @apply text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground;
+  }
+
+  .type-mono {
+    @apply font-mono text-sm tabular-nums;
+  }
+
+  /**
+   * Spacing rhythm.
+   *
+   * Three levels only — page, section, content — because a longer scale invites
+   * arbitrary choices. These are the gaps the redesign phases should reach for
+   * instead of inventing a margin each time.
+   */
+  .layout-page {
+    @apply mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8;
+  }
+
+  .layout-section {
+    @apply py-12 sm:py-16 lg:py-20;
+  }
+
+  .layout-stack {
+    @apply space-y-4 sm:space-y-6;
+  }
+
+  .layout-content {
+    @apply space-y-2;
+  }
+
   .skeleton {
     @apply relative overflow-hidden rounded-md bg-muted;
   }

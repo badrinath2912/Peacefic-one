@@ -5,9 +5,11 @@ import { Lock, Pencil, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
 import toast from 'react-hot-toast';
 
+import { useUpdateProfile } from '@/api/auth-queries';
 import { useOwnStudentProfile, type OwnStudentProfile } from '@/api/queries';
 import { useUpdateOwnStudentProfile } from '@/api/student-mutations';
 import { RouteGuard } from '@/components/auth/route-guard';
+import { PhotoUpload } from '@/components/form/photo-upload';
 import { PageHeader } from '@/components/layout/app-shell';
 import { ProfileForm, type ProfileFormValues } from '@/components/student/profile-form';
 import { Badge } from '@/components/ui/badge';
@@ -15,6 +17,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DescriptionList } from '@/components/ui/description-list';
 import { ErrorState } from '@/components/ui/empty-state';
+import { Field } from '@/components/ui/field';
+import { Input } from '@/components/ui/input';
 import { can } from '@/lib/permissions';
 import { formatDate, toTitleCase } from '@/lib/utils';
 import { useAuth } from '@/providers/auth-provider';
@@ -122,6 +126,8 @@ export default function StudentProfilePage() {
         </div>
       ) : (
         <div className="space-y-4">
+          <AccountDetailsCard />
+
           {/* ------------------------- institutional record ------------------------- */}
 
           <Card>
@@ -296,6 +302,114 @@ export default function StudentProfilePage() {
         </div>
       )}
     </RouteGuard>
+  );
+}
+
+/* ----------------------------- account details ----------------------------- */
+
+/**
+ * Name and photograph, which live on the user account rather than the student
+ * record — so they are written through `PATCH /auth/profile`, not
+ * `PATCH /students/me`.
+ *
+ * `phone` is deliberately **not** offered here even though the schema permits
+ * it: the student profile form below already writes it, and two controls
+ * editing one field is how they end up disagreeing. The endpoint still accepts
+ * it for other callers.
+ */
+function AccountDetailsCard() {
+  const { user, updateUser } = useAuth();
+  const profile = useUpdateProfile((updated) => updateUser(updated));
+
+  const [firstName, setFirstName] = useState(user?.firstName ?? '');
+  const [lastName, setLastName] = useState(user?.lastName ?? '');
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(user?.avatarUrl ?? null);
+  const [photoKey, setPhotoKey] = useState<string | null>(null);
+
+  const trimmedFirst = firstName.trim();
+  const trimmedLast = lastName.trim();
+
+  const changed =
+    trimmedFirst !== user?.firstName ||
+    trimmedLast !== user?.lastName ||
+    avatarUrl !== (user?.avatarUrl ?? null);
+
+  const valid = trimmedFirst.length > 0 && trimmedLast.length > 0;
+
+  function save(): void {
+    profile.mutate({
+      ...(trimmedFirst !== user?.firstName ? { firstName: trimmedFirst } : {}),
+      ...(trimmedLast !== user?.lastName ? { lastName: trimmedLast } : {}),
+      ...(avatarUrl !== (user?.avatarUrl ?? null) ? { avatarUrl } : {}),
+    });
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Account details</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Your name and photograph, as they appear across Peacefic One.
+        </p>
+      </CardHeader>
+
+      <CardContent className="space-y-4">
+        <PhotoUpload
+          value={avatarUrl}
+          storageKey={photoKey}
+          label="Profile photograph"
+          onChange={(url, key) => {
+            setAvatarUrl(url);
+            setPhotoKey(key);
+          }}
+        />
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field
+            label="First name"
+            required
+            error={trimmedFirst.length === 0 ? 'First name is required' : undefined}
+          >
+            {({ id, describedBy, invalid }) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                invalid={invalid}
+                autoComplete="given-name"
+                value={firstName}
+                onChange={(event) => setFirstName(event.target.value)}
+              />
+            )}
+          </Field>
+
+          <Field
+            label="Last name"
+            required
+            error={trimmedLast.length === 0 ? 'Last name is required' : undefined}
+          >
+            {({ id, describedBy, invalid }) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                invalid={invalid}
+                autoComplete="family-name"
+                value={lastName}
+                onChange={(event) => setLastName(event.target.value)}
+              />
+            )}
+          </Field>
+        </div>
+
+        <Button
+          onClick={save}
+          disabled={!changed || !valid}
+          isLoading={profile.isPending}
+          loadingText="Saving"
+        >
+          Save account details
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
 

@@ -145,11 +145,20 @@ export function examinationRoutes(): Router {
 
   /* --------------------------------- exams ----------------------------------- */
 
-  router.get('/analytics', authorize('exam:read'), asyncHandler(controller.analytics));
+  /**
+   * Staff-only, on `exam:update`.
+   *
+   * `exam:read` is held by students as well as staff, so gating these two on it
+   * handed a student institution-wide examination analytics and the ability to
+   * export the whole exam list. Neither is a student-facing capability, and
+   * `exam:update` already separates staff from students everywhere else in this
+   * module — so no new permission is introduced.
+   */
+  router.get('/analytics', authorize('exam:update'), asyncHandler(controller.analytics));
 
   router.post(
     '/bulk/export',
-    authorize('exam:read'),
+    authorize('exam:update'),
     exportRateLimit,
     validate({
       query: examinationExportQuerySchema,

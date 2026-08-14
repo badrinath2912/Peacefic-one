@@ -5,6 +5,9 @@ import {
   type AuthenticatedUser,
   type LoginResponse,
   type RegisterCollegeInput,
+  type RegisterStudentInput,
+  type UpdatePreferencesInput,
+  type UpdateProfileInput,
 } from '@peacefic/shared';
 import mongoose from 'mongoose';
 
@@ -26,6 +29,7 @@ import {
   ValidationError,
 } from '@/errors';
 import type { CollegeDocument } from '@/models/college.model';
+import type { StudentRegistrationDocument } from '@/models/student-registration.model';
 import type { UserDocument } from '@/models/user.model';
 import type { BatchRepository } from '@/repositories/batch.repository';
 import type { CollegeRepository } from '@/repositories/college.repository';
@@ -33,6 +37,7 @@ import type { DepartmentRepository } from '@/repositories/department.repository'
 import type { FacultyRepository } from '@/repositories/faculty.repository';
 import type { OtpRepository } from '@/repositories/otp.repository';
 import type { RoleRepository } from '@/repositories/role.repository';
+import type { StudentRegistrationRepository } from '@/repositories/student-registration.repository';
 import type { StudentRepository } from '@/repositories/student.repository';
 import type { UserRepository } from '@/repositories/user.repository';
 import {
@@ -79,6 +84,7 @@ export class AuthService {
     private readonly tokenService: TokenService,
     private readonly auditService: AuditService,
     private readonly emailService: EmailService,
+    private readonly studentRegistrationRepository: StudentRegistrationRepository,
   ) {}
 
   /* ------------------------------ registration ----------------------------- */
@@ -173,6 +179,125 @@ export class AuthService {
       await this.sendOtp(input.admin.email, 'email_verification', result.user._id);
 
       return { email: input.admin.email };
+    });
+  }
+
+  /**
+   * A student joining an existing institution with its join code.
+   *
+   * The college is resolved **only** from the code — no `collegeId` is accepted
+   * from the request, so a code issued by one institution cannot create an
+   * account under another. `findByJoinCode` already requires the college to be
+   * active and `allowStudentSelfRegistration` to be on, so a disabled or
+   * suspended institution is unreachable by construction.
+   *
+   * This creates a `User` (so the existing OTP, verification and login-refusal
+   * paths all apply unchanged) plus a `StudentRegistration` holding the academic
+   * side. It deliberately does **not** create a `Student`: that needs a
+   * department, batch, admission number and admission date, which only a
+   * reviewer can supply.
+   *
+   * Runs `withoutTenantScope` because it is unauthenticated — there is no tenant
+   * in context until the join code resolves one.
+   */
+  async registerStudent(input: RegisterStudentInput, meta: RequestMeta): Promise<{ email: string }> {
+    return withoutTenantScope('student-registration', async () => {
+      const college = await this.collegeRepository.findByJoinCode(input.joinCode);
+
+      // One message for "no such code", "self-registration is off" and
+      // "college not active" — distinguishing them would let anyone probe which
+      // institutions exist and which have registration open.
+      if (!college) {
+        throw new ValidationError('That join code is not valid.', [
+          { field: 'joinCode', message: 'Invalid join code' },
+        ]);
+      }
+
+      // Matches `registerCollege`, which also reports a taken email on its own
+      // field. Registration is the one place this system answers plainly:
+      // login and password reset stay deliberately silent.
+      if (await this.userRepository.emailExists(input.email)) {
+        throw new DuplicateResourceError('An account with that email already exists.', [
+          { field: 'email', message: 'Already in use' },
+        ]);
+      }
+
+      const duplicateRoll = await this.studentRegistrationRepository.findPendingByRollNumber(
+        String(college._id),
+        input.rollNumber,
+      );
+      if (duplicateRoll) {
+        throw new DuplicateResourceError('That roll number is already awaiting approval.', [
+          { field: 'rollNumber', message: 'Already registered' },
+        ]);
+      }
+
+      this.assertPasswordAcceptable(input.password, {
+        firstName: input.firstName,
+        lastName: input.lastName,
+        email: input.email,
+      });
+
+      const role = await this.roleRepository.findByKey(ROLE_KEYS.STUDENT, null);
+      if (!role) {
+        throw new BusinessRuleError('Roles are not seeded. Run the seed script first.');
+      }
+
+      const passwordHash = await hashPassword(input.password);
+
+      const result = await withTransaction(async (session) => {
+        const user = await this.userRepository.create(
+          {
+            email: input.email,
+            passwordHash,
+            firstName: input.firstName,
+            lastName: input.lastName,
+            phone: input.phone,
+            collegeId: college._id,
+            roleId: role._id,
+            // Verification moves this to `pending_approval`; only a reviewer
+            // makes it active. Login refuses both states.
+            status: 'pending_verification',
+          } as Partial<UserDocument>,
+          session,
+        );
+
+        const registration = await this.studentRegistrationRepository.create(
+          {
+            collegeId: college._id,
+            userId: user._id,
+            firstName: input.firstName,
+            lastName: input.lastName,
+            email: input.email,
+            phone: input.phone,
+            rollNumber: input.rollNumber,
+            approvalStatus: 'pending',
+          } as Partial<StudentRegistrationDocument>,
+          session,
+        );
+
+        return { user, registration };
+      });
+
+      await this.auditService.log({
+        action: AUDIT_ACTIONS.STUDENT_REGISTERED,
+        category: 'admin',
+        severity: 'info',
+        collegeId: String(college._id),
+        userId: String(result.user._id),
+        userEmail: result.user.email,
+        entity: {
+          type: 'StudentRegistration',
+          id: result.registration._id,
+          label: result.registration.rollNumber,
+        },
+        // The join code is a shared secret for the tenant and is never recorded.
+        metadata: { ip: meta.ip, rollNumber: result.registration.rollNumber },
+      });
+
+      await this.sendOtp(input.email, 'email_verification', result.user._id);
+
+      return { email: input.email };
     });
   }
 
@@ -522,6 +647,77 @@ export class AuthService {
       userId,
       userEmail: user.email,
     });
+  }
+
+  /* ------------------------------- self-service ------------------------------ */
+
+  /**
+   * The signed-in user's own profile.
+   *
+   * `userId` comes from the token in the controller — there is no id parameter
+   * on the route, so a caller cannot name someone else. Fields are copied one
+   * at a time rather than spread, so a body carrying `roleId`, `status`,
+   * `collegeId` or `mustChangePassword` cannot reach the document even if the
+   * validator were ever loosened. Anything absent is left untouched.
+   *
+   * Returns the rebuilt session user so the client can sync in one step: the
+   * derived `fullName` changes with the name, and guessing at it client-side is
+   * how a stale header appears after a rename.
+   */
+  async updateProfile(userId: string, input: UpdateProfileInput): Promise<AuthenticatedUser> {
+    const patch: Record<string, unknown> = {};
+
+    if (input.firstName !== undefined) patch.firstName = input.firstName;
+    if (input.lastName !== undefined) patch.lastName = input.lastName;
+    if (input.phone !== undefined) patch.phone = input.phone;
+    if (input.avatarUrl !== undefined) patch.avatarUrl = input.avatarUrl;
+
+    if (Object.keys(patch).length > 0) {
+      await this.userRepository.updateByIdOrFail(userId, { $set: patch });
+
+      // Field names only. A rename is worth recording; the values are ordinary
+      // profile data and add nothing to the trail.
+      await this.auditService.log({
+        action: AUDIT_ACTIONS.USER_UPDATED,
+        category: 'data',
+        userId,
+        metadata: { fields: Object.keys(patch) },
+      });
+    }
+
+    return this.getSession(userId);
+  }
+
+  /**
+   * The signed-in user's own preferences.
+   *
+   * Written with dot-notation keys so an unspecified preference keeps its
+   * stored value — replacing the whole sub-document would silently reset the
+   * three settings a caller did not mention.
+   *
+   * Not audited: a theme toggle is not an event worth carrying in a security
+   * trail, and the noise would crowd out entries that matter.
+   */
+  async updatePreferences(
+    userId: string,
+    input: UpdatePreferencesInput,
+  ): Promise<AuthenticatedUser> {
+    const patch: Record<string, unknown> = {};
+
+    if (input.theme !== undefined) patch['preferences.theme'] = input.theme;
+    if (input.locale !== undefined) patch['preferences.locale'] = input.locale;
+    if (input.emailNotifications !== undefined) {
+      patch['preferences.emailNotifications'] = input.emailNotifications;
+    }
+    if (input.pushNotifications !== undefined) {
+      patch['preferences.pushNotifications'] = input.pushNotifications;
+    }
+
+    if (Object.keys(patch).length > 0) {
+      await this.userRepository.updateByIdOrFail(userId, { $set: patch });
+    }
+
+    return this.getSession(userId);
   }
 
   /* --------------------------------- invites -------------------------------- */

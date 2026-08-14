@@ -4,8 +4,11 @@ import {
   forgotPasswordSchema,
   loginSchema,
   registerCollegeSchema,
+  registerStudentSchema,
   resendOtpSchema,
   resetPasswordSchema,
+  updatePreferencesSchema,
+  updateProfileSchema,
   verifyEmailSchema,
 } from '@peacefic/shared';
 import { Router } from 'express';
@@ -36,6 +39,15 @@ export function authRoutes(): Router {
     registerRateLimit,
     validate({ body: registerCollegeSchema }),
     asyncHandler(controller.registerCollege),
+  );
+
+  // Same rate limit as institution registration: both are public, unauthenticated
+  // account-creating endpoints and deserve the same abuse budget.
+  router.post(
+    '/register/student',
+    registerRateLimit,
+    validate({ body: registerStudentSchema }),
+    asyncHandler(controller.registerStudent),
   );
 
   router.post(
@@ -115,6 +127,23 @@ export function authRoutes(): Router {
     '/change-password',
     validate({ body: changePasswordSchema }),
     asyncHandler(controller.changePassword),
+  );
+
+  /**
+   * Self-service profile and preferences. No permission is declared, matching
+   * the other `/auth` routes above: authentication *is* the authorisation here,
+   * because the user is read from the token and no id is accepted.
+   */
+  router.patch(
+    '/profile',
+    validate({ body: updateProfileSchema }),
+    asyncHandler(controller.updateProfile),
+  );
+
+  router.patch(
+    '/preferences',
+    validate({ body: updatePreferencesSchema }),
+    asyncHandler(controller.updatePreferences),
   );
 
   return router;

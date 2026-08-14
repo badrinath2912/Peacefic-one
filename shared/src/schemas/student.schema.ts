@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { GENDER, SKILL_LEVEL, STUDENT_STATUS } from '../constants/enums';
+import { APPROVAL_STATUS, GENDER, SKILL_LEVEL, STUDENT_STATUS } from '../constants/enums';
 
 import {
   addressSchema,
@@ -207,4 +207,41 @@ export type ImportStudentRow = z.infer<typeof importStudentRowSchema>;
 
 export const importStudentsQuerySchema = z.object({
   dryRun: booleanQuery.default(true),
+});
+
+/* ------------------------ self-registration review ------------------------ */
+
+/**
+ * What a reviewer must supply to turn a pending registration into a Student.
+ *
+ * These are exactly the `Student` fields an applicant cannot know — picked from
+ * `createStudentSchema` rather than redeclared, so the validation rules stay in
+ * one place and cannot drift from ordinary student creation.
+ *
+ * Nothing here can reach the applicant's `User`: no role, status, email,
+ * password or college field is accepted.
+ */
+export const approveStudentRegistrationSchema = createStudentSchema
+  .pick({
+    departmentId: true,
+    batchId: true,
+    admissionNumber: true,
+    admissionDate: true,
+    currentSemester: true,
+    section: true,
+  })
+  .extend({
+    // The applicant typed a roll number; a reviewer may correct it before it
+    // becomes the permanent record.
+    rollNumber: z.string().trim().min(1, 'Roll number is required').max(40).optional(),
+  });
+export type ApproveStudentRegistrationInput = z.infer<typeof approveStudentRegistrationSchema>;
+
+export const rejectStudentRegistrationSchema = z.object({
+  reason: z.string().trim().min(10, 'Please give a reason of at least 10 characters').max(1000),
+});
+export type RejectStudentRegistrationInput = z.infer<typeof rejectStudentRegistrationSchema>;
+
+export const studentRegistrationListQuerySchema = paginationQuerySchema.extend({
+  approvalStatus: z.enum(APPROVAL_STATUS).optional(),
 });

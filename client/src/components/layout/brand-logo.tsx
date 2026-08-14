@@ -1,46 +1,40 @@
-import { GraduationCap } from 'lucide-react';
+import Image from 'next/image';
 
 import { cn } from '@/lib/utils';
 
 /**
  * The single place the Peacefic brand is drawn.
  *
- * Before this existed the mark and wordmark were written out separately in the
- * sidebar and the auth layout, which is how two versions of a logo drift apart.
- * Every surface now renders this component instead.
+ * The mark and wordmark used to be written out separately in the sidebar and
+ * the auth layout, which is how two versions of a logo drift apart. Every
+ * surface renders this component instead — sidebar, auth layout, and the
+ * forced password change — so there is exactly one implementation and one
+ * asset behind it.
  *
- * ---------------------------------------------------------------------------
- * REPLACING THE MARK WITH THE OFFICIAL ARTWORK
- *
- * No image asset ships with the repository today — there is no `client/public`
- * directory — so the mark below is the placeholder the product has been using.
- * To swap in the real logo, drop the file at `client/public/images/` and change
- * only the `<Mark>` function at the bottom of this file:
- *
- *   import Image from 'next/image';
- *
- *   <Image src="/images/peacefic-logo.svg" alt="" width={32} height={32}
- *          className={cn('object-contain', sizes.mark)} priority />
- *
- * Nothing else needs to change: every call site already sizes through `size`
- * and the alt text is supplied by the wordmark or `aria-label` here, so the
- * image itself stays decorative and no duplicate branding appears.
- * ---------------------------------------------------------------------------
+ * `client/public/images/peacefic-technology-logo.jpg` is that asset. It is a
+ * 720×701 JPEG of the circular Peacefic Technology badge, supplied as-is: not
+ * redrawn, recoloured or regenerated.
  */
+
+const LOGO_SRC = '/images/peacefic-technology-logo.jpg';
+
+/** Intrinsic size of the supplied artwork, so Next can reason about it. */
+const LOGO_INTRINSIC = { width: 720, height: 701 } as const;
 
 type BrandSize = 'sm' | 'md' | 'lg';
 
-const SIZES: Record<BrandSize, { box: string; icon: string; text: string; gap: string }> = {
-  sm: { box: 'size-7', icon: 'size-3.5', text: 'text-sm', gap: 'gap-2' },
-  md: { box: 'size-8', icon: 'size-4', text: 'text-base', gap: 'gap-2' },
-  lg: { box: 'size-11', icon: 'size-6', text: 'text-lg', gap: 'gap-2.5' },
+/** Rendered box in px, kept square so `rounded-full` stays a circle. */
+const SIZES: Record<BrandSize, { px: number; box: string; text: string; gap: string }> = {
+  sm: { px: 28, box: 'size-7', text: 'text-sm', gap: 'gap-2' },
+  md: { px: 32, box: 'size-8', text: 'text-base', gap: 'gap-2' },
+  lg: { px: 44, box: 'size-11', text: 'text-lg', gap: 'gap-2.5' },
 };
 
 interface BrandLogoProps {
   size?: BrandSize;
   /** Hidden when the rail is collapsed, or where the wordmark would crowd. */
   showWordmark?: boolean;
-  /** Inverts the mark for the dark promotional panel. */
+  /** Inverts the wordmark for the dark promotional panel. */
   tone?: 'brand' | 'inverse';
   className?: string;
 }
@@ -54,23 +48,27 @@ export function BrandLogo({
   const scale = SIZES[size];
 
   return (
-    <span
-      className={cn('flex items-center overflow-hidden', scale.gap, className)}
-      // The wordmark carries the name for assistive tech; when it is hidden the
-      // label below supplies it, so the brand is announced exactly once.
-      aria-label={showWordmark ? undefined : 'Peacefic One'}
-      role={showWordmark ? undefined : 'img'}
-    >
-      <Mark
-        className={cn(
-          'grid shrink-0 place-items-center rounded-md',
-          scale.box,
-          tone === 'inverse'
-            ? 'bg-primary-foreground/15 text-primary-foreground'
-            : 'bg-primary text-primary-foreground',
-        )}
-        iconClassName={scale.icon}
-      />
+    <span className={cn('flex items-center overflow-hidden', scale.gap, className)}>
+      {/**
+       * `object-cover` in a square box, clipped to a circle.
+       *
+       * The artwork is 720×701, so the badge fills the height and carries a
+       * ~9.5px white margin on each side. Covering a square box trims exactly
+       * that margin — no part of the badge itself is lost — and `rounded-full`
+       * keeps the circular identity rather than showing white corners against
+       * a coloured sidebar. `object-contain` would letterbox instead, leaving
+       * the corners visible.
+       */}
+      <span className={cn('relative shrink-0 overflow-hidden rounded-full', scale.box)}>
+        <Image
+          src={LOGO_SRC}
+          alt="Peacefic Technology"
+          width={LOGO_INTRINSIC.width}
+          height={LOGO_INTRINSIC.height}
+          sizes={`${scale.px}px`}
+          className="size-full object-cover"
+        />
+      </span>
 
       {showWordmark ? (
         <span
@@ -83,15 +81,6 @@ export function BrandLogo({
           Peacefic One
         </span>
       ) : null}
-    </span>
-  );
-}
-
-/** The mark alone. Replace this body with the official artwork — see above. */
-function Mark({ className, iconClassName }: { className: string; iconClassName: string }) {
-  return (
-    <span className={className}>
-      <GraduationCap className={iconClassName} aria-hidden />
     </span>
   );
 }

@@ -104,9 +104,19 @@ export function attendanceRoutes(): Router {
     asyncHandler(controller.getSession),
   );
 
+  /**
+   * Reading the sheet is a read, so it takes the read permissions like every
+   * other `GET` on this router.
+   *
+   * It was gated on `attendance:mark`, which was harmless while every college
+   * role held that permission. Once `mark` was narrowed to faculty and trainers,
+   * an administrator or head of department could no longer *see* a sheet they
+   * are explicitly allowed to review — read-only became blind. Marking below
+   * still requires `attendance:mark`; only the view is widened.
+   */
   router.get(
     '/sessions/:id/sheet',
-    authorize('attendance:mark'),
+    authorizeAny('attendance:read', 'attendance:read_all'),
     validate({ params: idParamSchema }),
     asyncHandler(controller.getSheet),
   );

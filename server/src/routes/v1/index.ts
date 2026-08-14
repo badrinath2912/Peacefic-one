@@ -5,6 +5,7 @@ import { attendanceRoutes } from './attendance.routes';
 import { auditRoutes } from './audit.routes';
 import { authRoutes } from './auth.routes';
 import { batchRoutes } from './batch.routes';
+import { collegeRoutes } from './college.routes';
 import { courseRoutes } from './course.routes';
 import { departmentRoutes } from './department.routes';
 import { examinationRoutes } from './examination.routes';
@@ -52,6 +53,7 @@ export function registerV1Routes(): Router {
   // are declared per route; row-level scope is applied in the services.
   router.use(authenticate, requireActiveAccount);
 
+  router.use('/colleges', collegeRoutes());
   router.use('/departments', departmentRoutes());
   router.use('/batches', batchRoutes());
   router.use('/students', studentRoutes());

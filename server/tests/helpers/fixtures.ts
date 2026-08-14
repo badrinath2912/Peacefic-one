@@ -166,6 +166,39 @@ export async function createStaffUser(
   return { token: login.body.data.accessToken as string, userId: String(user._id), facultyId };
 }
 
+/**
+ * A platform administrator: the wildcard role, and **no college of its own**.
+ *
+ * Deliberately created without a `collegeId`, because that is what the real
+ * bootstrap seeder produces and it is the condition the review routes have to
+ * cope with — every tenant-scoped repository yields nothing for this account.
+ */
+export async function createPlatformAdmin(
+  app: Application,
+  email = 'platform.admin@peacefic.test',
+): Promise<{ token: string; userId: string }> {
+  const role = await RoleModel.findOne({ key: ROLE_KEYS.PLATFORM_ADMIN, collegeId: null }).exec();
+  if (!role) throw new Error('platform_admin role not seeded');
+
+  const user = await UserModel.create({
+    email,
+    passwordHash: await hashPassword(PASSWORD),
+    firstName: 'Platform',
+    lastName: 'Administrator',
+    collegeId: null,
+    roleId: role._id,
+    status: 'active',
+    emailVerifiedAt: new Date(),
+  });
+
+  const login = await request(app)
+    .post('/api/v1/auth/login')
+    .send({ email, password: PASSWORD })
+    .expect(200);
+
+  return { token: login.body.data.accessToken as string, userId: String(user._id) };
+}
+
 export function studentPayload(
   tenant: TenantFixture,
   overrides: Record<string, unknown> = {},

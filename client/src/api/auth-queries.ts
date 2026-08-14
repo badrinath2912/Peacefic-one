@@ -1,6 +1,11 @@
 'use client';
 
-import type { ChangePasswordInput } from '@peacefic/shared';
+import type {
+  AuthenticatedUser,
+  ChangePasswordInput,
+  UpdatePreferencesInput,
+  UpdateProfileInput,
+} from '@peacefic/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import toast from 'react-hot-toast';
 
@@ -95,6 +100,47 @@ export function useSignOutEverywhere(onSignedOut: () => void) {
     onSuccess: () => {
       toast.success('Signed out on every device.');
       onSignedOut();
+    },
+
+    onError: (error: ApiError) => toast.error(error.message),
+  });
+}
+
+/**
+ * Self-service profile and preferences.
+ *
+ * Both endpoints answer with the rebuilt session user, so the caller passes it
+ * straight to `updateUser()` — the shell reflects a new name or avatar at once
+ * without a refetch, and without the stale-session problem the forced password
+ * change had to solve separately.
+ *
+ * `onUpdated` is supplied by the page rather than reaching into the auth
+ * provider from here, keeping this module free of provider imports.
+ */
+export function useUpdateProfile(onUpdated: (user: AuthenticatedUser) => void) {
+  return useMutation({
+    mutationFn: (payload: UpdateProfileInput) =>
+      apiPatch<{ user: AuthenticatedUser }>('/auth/profile', payload),
+
+    onSuccess: (result) => {
+      onUpdated(result.user);
+      toast.success('Profile updated.');
+    },
+
+    // Field-level messages are mapped onto the form by the page; this is the
+    // fallback for anything without a field path.
+    onError: (error: ApiError) => toast.error(error.message),
+  });
+}
+
+export function useUpdatePreferences(onUpdated: (user: AuthenticatedUser) => void) {
+  return useMutation({
+    mutationFn: (payload: UpdatePreferencesInput) =>
+      apiPatch<{ user: AuthenticatedUser }>('/auth/preferences', payload),
+
+    onSuccess: (result) => {
+      onUpdated(result.user);
+      toast.success('Preferences saved.');
     },
 
     onError: (error: ApiError) => toast.error(error.message),

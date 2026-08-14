@@ -385,8 +385,17 @@ export const examKeys = {
 
 /* --------------------------------- queries -------------------------------- */
 
-export function useExams(params: PaginatedQuery = {}) {
+/**
+ * `enabled` gates the request on `exam:read` at the call site, so a caller
+ * without it never issues the call rather than issuing it and handling a 403.
+ *
+ * What comes back is already narrowed by the server: a student receives only
+ * the published, completed, marks-entered and results-published exams for their
+ * own department. The client does not re-filter, and must not be relied on to.
+ */
+export function useExams(params: PaginatedQuery = {}, enabled = true) {
   return useQuery({
+    enabled,
     queryKey: examKeys.exams(params),
     queryFn: () => apiGetPaginated<Exam>(`/examinations${buildQuery(params)}`),
   });

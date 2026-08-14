@@ -1,7 +1,15 @@
 'use client';
 
-import { changePasswordSchema, type ChangePasswordInput } from '@peacefic/shared';
-import { Eye, EyeOff, Lock, LogOut, MonitorSmartphone, ShieldAlert } from 'lucide-react';
+import { THEME, changePasswordSchema, type ChangePasswordInput } from '@peacefic/shared';
+import {
+  Eye,
+  EyeOff,
+  Lock,
+  LogOut,
+  MonitorSmartphone,
+  ShieldAlert,
+  SlidersHorizontal,
+} from 'lucide-react';
 import { useState } from 'react';
 
 import {
@@ -9,6 +17,7 @@ import {
   useChangePassword,
   useRevokeSession,
   useSignOutEverywhere,
+  useUpdatePreferences,
   type AuthSession,
 } from '@/api/auth-queries';
 import { Alert } from '@/components/ui/alert';
@@ -19,9 +28,10 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { EmptyState, ErrorState } from '@/components/ui/empty-state';
 import { Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import { Select } from '@/components/ui/select';
 import { PageHeader } from '@/components/layout/app-shell';
 import { useApiForm } from '@/hooks/use-api-form';
-import { formatDateTime } from '@/lib/utils';
+import { formatDateTime, toTitleCase } from '@/lib/utils';
 import { useAuth } from '@/providers/auth-provider';
 
 /**
@@ -49,6 +59,8 @@ export default function StudentSettingsPage() {
       />
 
       <div className="space-y-4">
+        <PreferencesCard />
+
         <ChangePasswordCard />
 
         <SessionsCard
@@ -98,6 +110,119 @@ export default function StudentSettingsPage() {
         onCancel={() => setConfirmingSignOutAll(false)}
       />
     </>
+  );
+}
+
+/* -------------------------------- preferences ------------------------------- */
+
+const THEME_OPTIONS = THEME.map((value) => ({ value, label: toTitleCase(value) }));
+
+/**
+ * Account preferences.
+ *
+ * These were previously read-only in the product — `UserModel.preferences` was
+ * populated, returned by `/auth/session` and honoured by the notification
+ * service, but nothing could write it. `PATCH /auth/preferences` closes that,
+ * and the response carries the rebuilt session user so the shell updates
+ * without a refetch.
+ */
+function PreferencesCard() {
+  const { user, updateUser } = useAuth();
+  const current = user?.preferences;
+
+  const preferences = useUpdatePreferences((updated) => updateUser(updated));
+
+  const [theme, setTheme] = useState(current?.theme ?? 'system');
+  const [emailNotifications, setEmailNotifications] = useState(
+    current?.emailNotifications ?? true,
+  );
+  const [pushNotifications, setPushNotifications] = useState(current?.pushNotifications ?? true);
+
+  // Only what actually differs is sent, so the server's dot-notation write
+  // leaves everything else exactly as stored.
+  const changed =
+    theme !== current?.theme ||
+    emailNotifications !== current?.emailNotifications ||
+    pushNotifications !== current?.pushNotifications;
+
+  function save(): void {
+    preferences.mutate({
+      ...(theme !== current?.theme ? { theme: theme as (typeof THEME)[number] } : {}),
+      ...(emailNotifications !== current?.emailNotifications ? { emailNotifications } : {}),
+      ...(pushNotifications !== current?.pushNotifications ? { pushNotifications } : {}),
+    });
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <SlidersHorizontal className="size-4" aria-hidden />
+          Preferences
+        </CardTitle>
+        <p className="text-sm text-muted-foreground">
+          How Peacefic One looks, and when it contacts you.
+        </p>
+      </CardHeader>
+
+      <CardContent className="space-y-4">
+        <Field label="Theme" className="max-w-xs">
+          {({ id, describedBy }) => (
+            <Select
+              id={id}
+              aria-describedby={describedBy}
+              value={theme}
+              onChange={(event) => setTheme(event.target.value)}
+              options={THEME_OPTIONS}
+            />
+          )}
+        </Field>
+
+        <fieldset className="space-y-3">
+          <legend className="text-sm font-medium">Notifications</legend>
+
+          <label className="flex cursor-pointer items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 size-4 rounded border-input text-primary focus-visible:ring-2 focus-visible:ring-ring"
+              checked={emailNotifications}
+              onChange={(event) => setEmailNotifications(event.target.checked)}
+            />
+            <span>
+              Email notifications
+              <span className="block text-xs text-muted-foreground">
+                Turning this off stops routine emails. Security messages such as password resets are
+                always sent.
+              </span>
+            </span>
+          </label>
+
+          <label className="flex cursor-pointer items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 size-4 rounded border-input text-primary focus-visible:ring-2 focus-visible:ring-ring"
+              checked={pushNotifications}
+              onChange={(event) => setPushNotifications(event.target.checked)}
+            />
+            <span>
+              Push notifications
+              <span className="block text-xs text-muted-foreground">
+                In-app notifications always appear in your inbox regardless of this setting.
+              </span>
+            </span>
+          </label>
+        </fieldset>
+
+        <Button
+          onClick={save}
+          disabled={!changed}
+          isLoading={preferences.isPending}
+          loadingText="Saving"
+        >
+          Save preferences
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
 

@@ -1,4 +1,5 @@
 import {
+  approveStudentRegistrationSchema,
   bulkIdsSchema,
   bulkUpdateStudentsSchema,
   createStudentSchema,
@@ -6,7 +7,9 @@ import {
   importStudentRowSchema,
   importStudentsQuerySchema,
   objectIdSchema,
+  rejectStudentRegistrationSchema,
   studentListQuerySchema,
+  studentRegistrationListQuerySchema,
   updateOwnStudentProfileSchema,
   updateStudentSchema,
 } from '@peacefic/shared';
@@ -41,6 +44,47 @@ export function studentRoutes(): Router {
   /* ------------------------------ student portal ---------------------------- */
   // Declared before `/:id` so "me" is never parsed as an identifier. The
   // student is derived from the token; no id is accepted from the client.
+
+  /**
+   * Reviewing students who signed up with the college join code.
+   *
+   * On `student:approve` — the catalogue defines it as "Approve pending student
+   * registrations", so it was created for exactly this and no new permission is
+   * introduced. It is held by `college_admin` and `hod`, never by a student, so
+   * an applicant cannot reach their own review, let alone approve it.
+   *
+   * Declared before `/:id` so `registrations` is never parsed as a student id.
+   * Tenant isolation comes from `StudentRegistrationRepository` being
+   * `tenantScoped: true`; another college's registration is invisible rather
+   * than merely forbidden.
+   */
+  router.get(
+    '/registrations',
+    authorize('student:approve'),
+    validate({ query: studentRegistrationListQuerySchema }),
+    asyncHandler(controller.listRegistrations),
+  );
+
+  router.get(
+    '/registrations/:id',
+    authorize('student:approve'),
+    validate({ params: idParamSchema }),
+    asyncHandler(controller.getRegistration),
+  );
+
+  router.post(
+    '/registrations/:id/approve',
+    authorize('student:approve'),
+    validate({ params: idParamSchema, body: approveStudentRegistrationSchema }),
+    asyncHandler(controller.approveRegistration),
+  );
+
+  router.post(
+    '/registrations/:id/reject',
+    authorize('student:approve'),
+    validate({ params: idParamSchema, body: rejectStudentRegistrationSchema }),
+    asyncHandler(controller.rejectRegistration),
+  );
 
   router.get('/me', authorize('student:read_own'), asyncHandler(controller.getOwnProfile));
 

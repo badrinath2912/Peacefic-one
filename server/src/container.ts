@@ -29,6 +29,7 @@ import {
 } from '@/repositories/placement.repository';
 import { RoleRepository } from '@/repositories/role.repository';
 import { SessionRepository } from '@/repositories/session.repository';
+import { StudentRegistrationRepository } from '@/repositories/student-registration.repository';
 import { StudentRepository } from '@/repositories/student.repository';
 import {
   TrainingEnrollmentRepository,
@@ -92,6 +93,7 @@ export const otpRepository = new OtpRepository();
 export const roleRepository = new RoleRepository();
 export const sessionRepository = new SessionRepository();
 export const studentRepository = new StudentRepository();
+export const studentRegistrationRepository = new StudentRegistrationRepository();
 export const trainingRequestRepository = new TrainingRequestRepository();
 export const trainingSessionRepository = new TrainingSessionRepository();
 export const trainingEnrollmentRepository = new TrainingEnrollmentRepository();
@@ -129,6 +131,7 @@ export const authService = new AuthService(
   tokenService,
   auditService,
   emailService,
+  studentRegistrationRepository,
 );
 
 export const departmentService = new DepartmentService(
@@ -166,6 +169,7 @@ export const studentService = new StudentService(
   auditService,
   authService,
   emailService,
+  studentRegistrationRepository,
 );
 
 export const attendanceService = new AttendanceService(

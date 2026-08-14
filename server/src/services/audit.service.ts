@@ -193,6 +193,7 @@ export const AUDIT_ACTIONS = {
   COLLEGE_REJECTED: 'college.rejected',
   COLLEGE_SUSPENDED: 'college.suspended',
   COLLEGE_UPDATED: 'college.updated',
+  COLLEGE_JOIN_CODE_REGENERATED: 'college.join_code_regenerated',
 
   USER_CREATED: 'user.created',
   USER_UPDATED: 'user.updated',
@@ -212,6 +213,9 @@ export const AUDIT_ACTIONS = {
   BATCH_PROMOTED: 'batch.promoted',
   BATCH_CAPACITY_OVERRIDDEN: 'batch.capacity_overridden',
 
+  STUDENT_REGISTERED: 'student.registered',
+  STUDENT_REGISTRATION_APPROVED: 'student.registration_approved',
+  STUDENT_REGISTRATION_REJECTED: 'student.registration_rejected',
   STUDENT_CREATED: 'student.created',
   STUDENT_UPDATED: 'student.updated',
   STUDENT_DELETED: 'student.deleted',

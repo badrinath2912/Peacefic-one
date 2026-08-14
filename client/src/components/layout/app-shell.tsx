@@ -2,6 +2,7 @@
 
 import type { ReactNode } from 'react';
 
+import { Breadcrumbs, type Crumb } from '@/components/ui/breadcrumbs';
 import { cn } from '@/lib/utils';
 import { useAppSelector } from '@/store';
 
@@ -70,16 +71,60 @@ interface PageHeaderProps {
   title: string;
   description?: string;
   actions?: ReactNode;
+  /**
+   * Small contextual label above the title — the portal or area the page sits
+   * in, such as "College" or "Student". Optional: 92 pages already call this
+   * component with title/description/actions only, and must keep rendering
+   * unchanged.
+   */
+  eyebrow?: string;
+  /**
+   * Rendered through the existing `Breadcrumbs` primitive rather than a second
+   * trail implementation. Only supply these where hierarchy genuinely helps —
+   * a top-level page does not need a one-item breadcrumb.
+   */
+  breadcrumbs?: Crumb[];
 }
 
-export function PageHeader({ title, description, actions }: PageHeaderProps) {
+/**
+ * The heading block every page opens with.
+ *
+ * Deliberately not wrapped in a `Card`: the header is the page's opening
+ * statement, and boxing it flattens the hierarchy between it and the content
+ * that follows. Separation comes from whitespace and a hairline rule instead.
+ *
+ * All four optional props are additive — `eyebrow` and `breadcrumbs` render
+ * nothing when absent, so existing callers are untouched.
+ */
+export function PageHeader({
+  title,
+  description,
+  actions,
+  eyebrow,
+  breadcrumbs,
+}: PageHeaderProps) {
   return (
-    <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-      <div className="space-y-1">
-        <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{title}</h1>
-        {description ? <p className="text-sm text-muted-foreground">{description}</p> : null}
+    <div className="mb-6 border-b border-border pb-5">
+      {breadcrumbs && breadcrumbs.length > 0 ? <Breadcrumbs items={breadcrumbs} /> : null}
+
+      {/* `items-start` with wrapping, so a long title and its actions stack on
+          narrow screens rather than the actions being pushed off-screen. */}
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+        <div className="min-w-0 space-y-1.5">
+          {eyebrow ? <p className="type-overline">{eyebrow}</p> : null}
+
+          {/* The semantic scale rather than ad-hoc sizes: every page title in
+              the product moves together from here, and later phases have one
+              place to change rather than a hundred. */}
+          <h1 className="type-h1">{title}</h1>
+
+          {description ? (
+            <p className="type-body-sm max-w-2xl text-muted-foreground">{description}</p>
+          ) : null}
+        </div>
+
+        {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
       </div>
-      {actions ? <div className="flex items-center gap-2">{actions}</div> : null}
     </div>
   );
 }

@@ -61,6 +61,17 @@ export class AuthController {
     });
   };
 
+  registerStudent = async (req: Request, res: Response): Promise<Response> => {
+    const result = await this.authService.registerStudent(req.body, this.meta(req));
+    return sendCreated(res, {
+      email: result.email,
+      // Says plainly that access is not granted yet — the most common support
+      // question after registering is "why can't I sign in?".
+      message:
+        'Registration submitted. Verify your email, then your college administrator must approve your registration before you can sign in.',
+    });
+  };
+
   verifyEmail = async (req: Request, res: Response): Promise<Response> => {
     await this.authService.verifyEmail(req.body.email, req.body.otp);
     return sendSuccess(res, { message: 'Your email address has been verified.' });
@@ -156,6 +167,26 @@ export class AuthController {
     return sendSuccess(res, {
       message: 'Your password has been reset. Please sign in with your new password.',
     });
+  };
+
+  /**
+   * Self-service only. The user is taken from the token, so these routes carry
+   * no id parameter and there is nothing a caller could substitute.
+   */
+  updateProfile = async (req: Request, res: Response): Promise<Response> => {
+    const userId = requestContext.userId();
+    if (!userId) throw new AuthenticationError();
+
+    const user = await this.authService.updateProfile(userId, req.body);
+    return sendSuccess(res, { user });
+  };
+
+  updatePreferences = async (req: Request, res: Response): Promise<Response> => {
+    const userId = requestContext.userId();
+    if (!userId) throw new AuthenticationError();
+
+    const user = await this.authService.updatePreferences(userId, req.body);
+    return sendSuccess(res, { user });
   };
 
   changePassword = async (req: Request, res: Response): Promise<Response> => {

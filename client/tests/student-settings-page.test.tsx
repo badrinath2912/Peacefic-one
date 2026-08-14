@@ -420,10 +420,28 @@ describe('Student settings page', () => {
   /* ------------------------------- preferences ------------------------------ */
 
   /**
-   * `UserModel.preferences` is real and read on `/auth/session`, but nothing
-   * writes it. No control for it may appear until an endpoint does.
+   * These two replace an earlier pair that asserted preferences were *absent*.
+   * That was correct while `UserModel.preferences` was readable but had no
+   * write path — the rule then was that a control which cannot persist must not
+   * be shown. `PATCH /auth/preferences` now exists, so the rule is inverted
+   * rather than dropped: the controls must be present, and must still not fire
+   * anything until the user saves.
+   *
+   * Behaviour of the controls themselves is covered in
+   * `self-service-pages.test.tsx`.
    */
-  it('requests no preferences endpoint, because none exists', async () => {
+  it('renders the preference controls now that they persist', async () => {
+    renderWithQuery(<StudentSettingsPage />);
+
+    await screen.findByText('Chrome on Windows');
+
+    expect(screen.getByLabelText('Theme')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /email notifications/i })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /push notifications/i })).toBeInTheDocument();
+  });
+
+  /** Reading the page must not write anything; saving is an explicit act. */
+  it('requests no preferences endpoint until the user saves', async () => {
     renderWithQuery(<StudentSettingsPage />);
 
     await screen.findByText('Chrome on Windows');
@@ -431,18 +449,5 @@ describe('Student settings page', () => {
     for (const url of urls()) {
       expect(url).not.toContain('preferences');
     }
-  });
-
-  it('renders no preference control that could not persist', async () => {
-    renderWithQuery(<StudentSettingsPage />);
-
-    await screen.findByText('Chrome on Windows');
-
-    expect(screen.queryByRole('switch')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/theme/i)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/language/i)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/locale/i)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/email notifications/i)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/push notifications/i)).not.toBeInTheDocument();
   });
 });

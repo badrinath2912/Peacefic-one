@@ -722,15 +722,35 @@ export class ExaminationService {
 
   /* ------------------------------- registration ------------------------------ */
 
+  /**
+   * Who is registered for an exam.
+   *
+   * Scoped the same way as `hallTickets`: staff see the roster, a student sees
+   * only their own row. Without this a student holding `exam:read` could
+   * enumerate every classmate sitting the paper — the response carries
+   * populated student and batch records, and `search` and `filter` pass
+   * straight through to the repository, so the roster was queryable too.
+   */
   async listRegistrations(
     examId: string,
     options: ListOptions,
   ): Promise<PaginatedResult<ExamRegistrationDocument>> {
     const exam = await this.getExam(examId);
 
+    const filter: Record<string, unknown> = {
+      ...(options.filter ?? {}),
+      examId: exam._id,
+    };
+
+    // Assigned last so a caller-supplied `studentId` filter cannot widen it.
+    if (!this.isExamStaff()) {
+      const student = await this.scopeGuard.requireOwnStudent();
+      filter.studentId = student._id;
+    }
+
     return this.registrationRepository.paginate({
       ...options,
-      filter: { ...(options.filter ?? {}), examId: exam._id },
+      filter,
       include: options.include ?? 'studentId,batchId',
     });
   }

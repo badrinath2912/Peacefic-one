@@ -29,6 +29,39 @@ export class StudentController {
     return sendPaginated(res, result.items, result.pagination);
   };
 
+  /* -------------------------- self-registration review ---------------------- */
+
+  listRegistrations = async (req: Request, res: Response): Promise<Response> => {
+    const query = req.query as Record<string, unknown>;
+
+    const result = await this.studentService.listRegistrations({
+      page: query.page as number | undefined,
+      limit: query.limit as number | undefined,
+      sort: query.sort as string | undefined,
+      search: query.search as string | undefined,
+      filter: query.approvalStatus ? { approvalStatus: query.approvalStatus } : {},
+    });
+
+    return sendPaginated(res, result.items, result.pagination);
+  };
+
+  getRegistration = async (req: Request, res: Response): Promise<Response> => {
+    return sendSuccess(res, await this.studentService.getRegistration(req.params.id as string));
+  };
+
+  approveRegistration = async (req: Request, res: Response): Promise<Response> => {
+    const student = await this.studentService.approveRegistration(req.params.id as string, req.body);
+    return sendCreated(res, student);
+  };
+
+  rejectRegistration = async (req: Request, res: Response): Promise<Response> => {
+    const registration = await this.studentService.rejectRegistration(
+      req.params.id as string,
+      req.body.reason as string,
+    );
+    return sendSuccess(res, registration);
+  };
+
   getById = async (req: Request, res: Response): Promise<Response> => {
     const student = await this.studentService.getById(req.params.id as string);
     return sendSuccess(res, student);

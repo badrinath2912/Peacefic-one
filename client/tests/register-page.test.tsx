@@ -21,7 +21,7 @@ vi.mock('@/lib/api-client', async () => {
   return { ...actual, apiPost: (...args: unknown[]) => apiPost(...args) };
 });
 
-const { default: RegisterPage } = await import('@/app/(auth)/register/page');
+const { default: RegisterPage } = await import('@/app/(auth)/register/institution/page');
 
 /** Fills every required field with values the shared schema accepts. */
 async function fillValidForm(user: ReturnType<typeof userEvent.setup>) {

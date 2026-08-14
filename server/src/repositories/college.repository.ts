@@ -41,6 +41,20 @@ export class CollegeRepository extends BaseRepository<CollegeDocument> {
       .exec();
   }
 
+  /**
+   * The caller's own college with its join code attached.
+   *
+   * The only other place a join code is read is `findByJoinCode`, which looks it
+   * up rather than returning it. Kept as an explicit method so every read of a
+   * `select: false` secret is greppable.
+   */
+  async findByIdWithJoinCode(collegeId: string): Promise<CollegeDocument | null> {
+    return this.model
+      .findOne({ _id: collegeId, deletedAt: null })
+      .select('+settings.joinCode')
+      .exec();
+  }
+
   async findPending(): Promise<CollegeDocument[]> {
     return this.model.find({ status: 'pending', deletedAt: null }).sort({ createdAt: 1 }).exec();
   }

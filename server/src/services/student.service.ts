@@ -6,10 +6,13 @@ import {
   type StudentListQuery,
   type UpdateOwnStudentProfileInput,
   type UpdateStudentInput,
+  type ApproveStudentRegistrationInput,
 } from '@peacefic/shared';
 import mongoose from 'mongoose';
 
 import { AUDIT_ACTIONS, type AuditService } from './audit.service';
+
+import type { StudentRegistrationDocument } from '@/models/student-registration.model';
 import type { AuthService } from './auth.service';
 import type { EmailService } from './email.service';
 import type { ScopeGuard } from './scope-guard.service';
@@ -32,6 +35,7 @@ import type { BatchRepository } from '@/repositories/batch.repository';
 import type { CollegeRepository } from '@/repositories/college.repository';
 import type { DepartmentRepository } from '@/repositories/department.repository';
 import type { RoleRepository } from '@/repositories/role.repository';
+import type { StudentRegistrationRepository } from '@/repositories/student-registration.repository';
 import type { StudentRepository } from '@/repositories/student.repository';
 import type { UserRepository } from '@/repositories/user.repository';
 import { digestAadhaar, generateRefreshToken, hashPassword } from '@/utils/crypto';
@@ -77,6 +81,7 @@ export class StudentService {
     private readonly auditService: AuditService,
     private readonly authService: AuthService,
     private readonly emailService: EmailService,
+    private readonly studentRegistrationRepository: StudentRegistrationRepository,
   ) {}
 
   /* ---------------------------------- read --------------------------------- */
@@ -132,7 +137,15 @@ export class StudentService {
 
   /* --------------------------------- create -------------------------------- */
 
-  async create(input: CreateStudentInput): Promise<StudentDocument> {
+  /**
+   * @param existingUserId  An account that already exists for this person, used
+   * when approving a self-registration: the applicant created their own login
+   * and chose their own password at registration, so a second User must not be
+   * created and their credential must not be replaced. Everything else — scope
+   * guard, batch/department agreement, duplicate checks, capacity, counters —
+   * runs identically, so there is only ever one student-creation path.
+   */
+  async create(input: CreateStudentInput, existingUserId?: string): Promise<StudentDocument> {
     await this.scopeGuard.assertCanAccessBatch(input.batchId);
 
     const [batch, department] = await Promise.all([
@@ -149,7 +162,7 @@ export class StudentService {
     const [rollTaken, admissionTaken, emailTaken, aadhaarTaken] = await Promise.all([
       this.studentRepository.rollNumberExists(input.rollNumber),
       this.studentRepository.admissionNumberExists(input.admissionNumber),
-      this.userRepository.emailExists(input.email),
+      existingUserId ? Promise.resolve(false) : this.userRepository.emailExists(input.email),
       aadhaar ? this.studentRepository.aadhaarHashExists(aadhaar.hash) : Promise.resolve(false),
     ]);
 
@@ -187,7 +200,15 @@ export class StudentService {
     // inconsistency that is painful to detect later, so both writes and both
     // counters move together.
     const student = await withTransaction(async (session) => {
-      const user = await this.userRepository.create(
+      const user = existingUserId
+        ? // Only the status moves. Role, college, email and password hash are
+          // left exactly as registration set them.
+          await this.userRepository.updateByIdOrFail(
+            existingUserId,
+            { $set: { status: 'active' } },
+            { session },
+          )
+        : await this.userRepository.create(
         {
           email: input.email,
           // Placeholder: the invite flow sets the real password. It is random
@@ -818,5 +839,141 @@ export class StudentService {
     if (normalised === 'f' || normalised === 'female') return 'female';
     if (normalised === 'other') return 'other';
     return 'prefer_not_to_say';
+  }
+
+  /* -------------------------- self-registration review ---------------------- */
+  /**
+   * Reviewing students who registered themselves with the college join code.
+   *
+   * Isolation is structural: `StudentRegistrationRepository` is
+   * `tenantScoped: true`, so `paginate` and `findByIdOrFail` are narrowed to the
+   * reviewer's own college by `BaseRepository` before this service sees them. A
+   * registration from another institution is not "forbidden" here — it is
+   * invisible, and a direct id lookup answers 404.
+   */
+  async listRegistrations(options: ListOptions): Promise<PaginatedResult<StudentRegistrationDocument>> {
+    return this.studentRegistrationRepository.paginate({
+      ...options,
+      sort: options.sort ?? 'createdAt',
+    });
+  }
+
+  async getRegistration(id: string): Promise<StudentRegistrationDocument> {
+    return this.studentRegistrationRepository.findByIdOrFail(id);
+  }
+
+  /**
+   * Approving a registration is what finally creates the `Student`.
+   *
+   * The reviewer supplies the four fields an applicant cannot know — department,
+   * batch, admission number and admission date — and `create()` below is reused
+   * verbatim, so a self-registered student goes through exactly the same
+   * validation, batch capacity checks and scope guard as one added by hand.
+   * There is no second student-creation path.
+   *
+   * `sendInvite: false`: this applicant already chose a password at
+   * registration. Inviting them would overwrite a credential they are waiting to
+   * use.
+   */
+  async approveRegistration(
+    id: string,
+    input: ApproveStudentRegistrationInput,
+  ): Promise<StudentDocument> {
+    const registration = await this.studentRegistrationRepository.findByIdOrFail(id);
+
+    // Refusing anything already decided makes double approval a no-op rather
+    // than a second Student for the same person.
+    if (registration.approvalStatus !== 'pending') {
+      throw new BusinessRuleError(
+        `This registration has already been ${registration.approvalStatus}.`,
+      );
+    }
+
+    const user = await this.userRepository.findByIdOrFail(String(registration.userId));
+
+    // Email verification is a separate gate and this is not a way around it.
+    if (!user.emailVerifiedAt) {
+      throw new BusinessRuleError(
+        'This applicant has not verified their email address yet.',
+      );
+    }
+
+    const student = await this.create({
+      firstName: registration.firstName,
+      lastName: registration.lastName,
+      email: registration.email,
+      phone: registration.phone,
+      rollNumber: input.rollNumber ?? registration.rollNumber,
+      departmentId: input.departmentId,
+      batchId: input.batchId,
+      admissionNumber: input.admissionNumber,
+      admissionDate: input.admissionDate,
+      currentSemester: input.currentSemester ?? 1,
+      section: input.section ?? null,
+      status: 'active',
+      sendInvite: false,
+    } as CreateStudentInput, String(registration.userId));
+
+    await this.studentRegistrationRepository.updateByIdOrFail(id, {
+      $set: {
+        approvalStatus: 'approved',
+        reviewedBy: requestContext.get().userId,
+        reviewedAt: new Date(),
+        studentId: student._id,
+        rejectionReason: null,
+      },
+    });
+
+    await this.auditService.log({
+      action: AUDIT_ACTIONS.STUDENT_REGISTRATION_APPROVED,
+      category: 'admin',
+      severity: 'warning',
+      entity: { type: 'StudentRegistration', id: registration._id, label: registration.rollNumber },
+      // Field names, not values: nothing about the applicant's credentials.
+      metadata: { assigned: ['departmentId', 'batchId', 'admissionNumber', 'admissionDate'] },
+    });
+
+    return student;
+  }
+
+  /**
+   * Rejection is terminal for this application and creates no `Student`.
+   *
+   * The account is archived rather than deleted, so the email stays claimed and
+   * the decision remains auditable. `assertAccountUsable` already refuses
+   * `archived` with "This account is no longer active", so a rejected applicant
+   * cannot sign in and cannot drift back to active on their own.
+   */
+  async rejectRegistration(id: string, reason: string): Promise<StudentRegistrationDocument> {
+    const registration = await this.studentRegistrationRepository.findByIdOrFail(id);
+
+    if (registration.approvalStatus !== 'pending') {
+      throw new BusinessRuleError(
+        `This registration has already been ${registration.approvalStatus}.`,
+      );
+    }
+
+    const updated = await this.studentRegistrationRepository.updateByIdOrFail(id, {
+      $set: {
+        approvalStatus: 'rejected',
+        rejectionReason: reason,
+        reviewedBy: requestContext.get().userId,
+        reviewedAt: new Date(),
+      },
+    });
+
+    await this.userRepository.updateById(String(registration.userId), {
+      $set: { status: 'archived' },
+    });
+
+    await this.auditService.log({
+      action: AUDIT_ACTIONS.STUDENT_REGISTRATION_REJECTED,
+      category: 'admin',
+      severity: 'warning',
+      entity: { type: 'StudentRegistration', id: registration._id, label: registration.rollNumber },
+      metadata: { reason },
+    });
+
+    return updated;
   }
 }

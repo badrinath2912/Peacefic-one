@@ -332,11 +332,13 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, string[]> = {
     'question:create',
     'question:update',
     'question:delete',
+    // Attendance is taken by whoever runs the session — faculty and trainers.
+    // An administrator oversees it rather than recording it, so they read and
+    // export but do not mark, correct or lock.
     'attendance:read',
     'attendance:read_all',
-    'attendance:mark',
-    'attendance:update',
-    'attendance:lock',
+    // The one write they keep: a locked session that is genuinely wrong would
+    // otherwise be uncorrectable. It is flagged dangerous and audited.
     'attendance:override_lock',
     'attendance:export',
     'gradescale:read',
@@ -464,10 +466,10 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<RoleKey, string[]> = {
     'question:read',
     'question:create',
     'question:update',
+    // Oversight, not recording — the same split as the college administrator.
+    // A head of department reviews and exports attendance for their department;
+    // the faculty and trainers running the sessions record it.
     'attendance:read',
-    'attendance:mark',
-    'attendance:update',
-    'attendance:lock',
     'attendance:export',
     'gradescale:read',
     'marks:read',
