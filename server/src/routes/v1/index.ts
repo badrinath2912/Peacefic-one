@@ -12,6 +12,7 @@ import { examinationRoutes } from './examination.routes';
 import { facultyRoutes } from './faculty.routes';
 import { fileRoutes } from './file.routes';
 import { notificationRoutes } from './notification.routes';
+import { platformAggregationRoutes } from './platform-aggregation.routes';
 import {
   applicationRoutes,
   companyRoutes,
@@ -54,6 +55,7 @@ export function registerV1Routes(): Router {
   router.use(authenticate, requireActiveAccount);
 
   router.use('/colleges', collegeRoutes());
+  router.use('/platform/aggregation', platformAggregationRoutes());
   router.use('/departments', departmentRoutes());
   router.use('/batches', batchRoutes());
   router.use('/students', studentRoutes());
