@@ -176,10 +176,14 @@ export class ExamRegistrationRepository extends BaseRepository<ExamRegistrationD
   ): Promise<number> {
     if (examIds.length === 0) return 0;
 
-    const rows = await this.findMany(
-      { studentId, examId: { $in: examIds } },
-      { sort: '-createdAt' },
-    );
+    /**
+     * Unsorted deliberately. The reduce below takes the highest `attempt` of
+     * every row, so order cannot change the answer — and asking for
+     * `-createdAt` was rejected outright, because `createdAt` is not one of
+     * this repository's sortable fields. That refused a student registering
+     * for a repeat exam of a course they had already sat.
+     */
+    const rows = await this.findMany({ studentId, examId: { $in: examIds } });
 
     return rows.reduce((highest, row) => Math.max(highest, row.attempt), 0);
   }

@@ -477,6 +477,30 @@ describe('examination API', () => {
   /* ------------------------------- registration ------------------------------ */
 
   describe('registration', () => {
+    /**
+     * Registering for a second exam of the same course reaches
+     * `highestAttempt`, which reads the student's earlier registrations to work
+     * out which attempt this is. That read asked to be sorted by `createdAt`,
+     * which the registration repository does not allow, so the whole request
+     * was refused — a student could never be registered for a repeat exam.
+     *
+     * The first registration never showed it: with no prior rows the method
+     * returns early and the sort is never requested.
+     */
+    it('registers a student for a second exam of the same course', async () => {
+      const first = await createExam();
+      const second = await createExam({ code: 'DSA-SEM5-R', title: 'DSA Repeat Examination' });
+      const studentId = await createStudent();
+
+      for (const examId of [first, second]) {
+        await request(app)
+          .post(`${API}/examinations/${examId}/registrations`)
+          .set(auth(tenant.token))
+          .send({ studentIds: [studentId], batchIds: [] })
+          .expect(201);
+      }
+    });
+
     it('registers a whole batch and issues hall ticket numbers', async () => {
       const examId = await createExam();
       await createStudent();
