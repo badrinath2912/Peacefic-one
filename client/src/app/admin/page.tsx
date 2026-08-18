@@ -1,6 +1,16 @@
 'use client';
 
-import { Building2, LogOut } from 'lucide-react';
+import {
+  Award,
+  Briefcase,
+  Building2,
+  CalendarDays,
+  ClipboardCheck,
+  FileText,
+  GraduationCap,
+  LogOut,
+  Users,
+} from 'lucide-react';
 import { useState } from 'react';
 
 import {
@@ -9,6 +19,7 @@ import {
   useRejectCollege,
   type CollegeForReview,
 } from '@/api/college-queries';
+import { usePlatformOverview } from '@/api/platform-queries';
 import { PageHeader } from '@/components/layout/app-shell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -16,8 +27,70 @@ import { Card, CardContent } from '@/components/ui/card';
 import { EmptyState, ErrorState } from '@/components/ui/empty-state';
 import { Field } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import { StatCard } from '@/components/ui/stat-card';
 import { formatDate } from '@/lib/utils';
 import { useAuth } from '@/providers/auth-provider';
+
+/**
+ * Platform totals across every institution.
+ *
+ * Each figure comes from the aggregation endpoint exactly as the server
+ * computed it — including `attendanceRate`, which arrives as a percentage and
+ * is only formatted here. Recomputing any of it on the client would risk the
+ * dashboard disagreeing with the per-college views.
+ */
+function PlatformOverviewCards() {
+  const overview = usePlatformOverview();
+
+  if (overview.isError) {
+    return (
+      <div className="mb-6">
+        <ErrorState
+          title="Could not load platform metrics"
+          message={overview.error.message}
+          requestId={overview.error.requestId}
+          onRetry={() => void overview.refetch()}
+        />
+      </div>
+    );
+  }
+
+  const data = overview.data;
+
+  // `value` is left undefined while loading so `StatCard` shows its skeleton
+  // rather than a zero that would read as a real figure.
+  const cards = [
+    { label: 'Institutions', value: data?.institutions, icon: Building2 },
+    { label: 'Students', value: data?.students, icon: GraduationCap },
+    { label: 'Faculty', value: data?.faculty, icon: Users },
+    { label: 'Examinations', value: data?.examinations, icon: FileText },
+    { label: 'Companies', value: data?.companies, icon: Briefcase },
+    { label: 'Placements', value: data?.placements, icon: Award },
+    { label: 'Training sessions', value: data?.trainingSessions, icon: CalendarDays },
+    {
+      label: 'Attendance rate',
+      // Already a percentage from the server; only the unit is added.
+      value: data ? `${data.attendanceRate}%` : undefined,
+      icon: ClipboardCheck,
+    },
+  ] as const;
+
+  return (
+    <section className="mb-6" aria-label="Platform totals">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {cards.map((card) => (
+          <StatCard
+            key={card.label}
+            label={card.label}
+            value={card.value}
+            icon={card.icon}
+            isLoading={overview.isLoading}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
 
 const STATUS_TONE = {
   pending: 'warning',
@@ -70,6 +143,8 @@ export default function AdminPage() {
           </div>
         }
       />
+
+      <PlatformOverviewCards />
 
       <div className="mb-4 flex gap-2" role="tablist" aria-label="Registration filter">
         {(['pending', 'all'] as const).map((value) => (
