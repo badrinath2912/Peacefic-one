@@ -1,4 +1,4 @@
-import { escapeRegex, type PaginationMeta } from '@peacefic/shared';
+import { ROLE_KEYS, escapeRegex, type PaginationMeta } from '@peacefic/shared';
 import mongoose, {
   type ClientSession,
   type FilterQuery,
@@ -11,7 +11,7 @@ import mongoose, {
 } from 'mongoose';
 
 import { requestContext } from '@/config/request-context';
-import { InternalError, NotFoundError, ValidationError } from '@/errors';
+import { AuthorizationError, InternalError, NotFoundError, ValidationError } from '@/errors';
 
 export interface ListOptions {
   page?: number;
@@ -104,6 +104,24 @@ export abstract class BaseRepository<TDoc> {
 
     const collegeId = context?.collegeId;
     if (!collegeId) {
+      /**
+       * A platform administrator legitimately has no college of their own, and
+       * holds `*:*` — so every permission check passes and they arrive here on
+       * routes that read a single tenant's data. That is a refusal, not a
+       * fault: cross-tenant reads belong on the platform endpoints built for
+       * them. Answering 500 told an ordinary authenticated caller that the
+       * server had broken.
+       *
+       * Any other role reaching this point *is* a fault — a tenant user should
+       * never lose their context — so it stays an internal error and keeps
+       * being reported as one.
+       */
+      if (context?.roleKey === ROLE_KEYS.PLATFORM_ADMIN) {
+        throw new AuthorizationError(
+          'This endpoint serves a single institution. Use the platform endpoints instead.',
+        );
+      }
+
       throw new InternalError(
         `Tenant context is missing on a scoped query against ${this.model.modelName}.`,
       );

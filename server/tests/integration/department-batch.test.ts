@@ -5,7 +5,7 @@ import { BatchModel } from '@/models/batch.model';
 import { DepartmentModel } from '@/models/department.model';
 
 import { seedReferenceData, testApp } from '../helpers/app';
-import { createStaffUser, createTenant, studentPayload, type TenantFixture } from '../helpers/fixtures';
+import { createPlatformAdmin, createStaffUser, createTenant, studentPayload, type TenantFixture } from '../helpers/fixtures';
 
 const API = '/api/v1';
 
@@ -345,6 +345,32 @@ describe('department and batch API', () => {
       const ids = (response.body.data as Array<{ id: string }>).map((row) => row.id);
       expect(ids).toContain(tenant.batchId);
       expect(ids).not.toContain(String(otherBatch._id));
+    });
+  });
+
+  describe('platform administrator on a tenant-scoped route', () => {
+    /**
+     * A platform administrator holds `*:*`, so every permission check passes —
+     * but they have no college of their own, and these routes read through
+     * tenant-scoped repositories. That combination reached
+     * `BaseRepository.scope()` with no tenant context and threw, surfacing as
+     * a 500 for an ordinary authenticated caller.
+     *
+     * The refusal is deliberate: cross-tenant reads belong on the platform
+     * endpoints built for them, not on a college's own routes.
+     */
+    it('is refused rather than failing internally', async () => {
+      const platform = await createPlatformAdmin(app);
+
+      await request(app)
+        .get(API + '/departments')
+        .set(auth(platform.token))
+        .expect(403);
+
+      await request(app)
+        .get(API + '/batches')
+        .set(auth(platform.token))
+        .expect(403);
     });
   });
 });

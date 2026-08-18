@@ -9,7 +9,7 @@ import { FacultyModel } from '@/models/faculty.model';
 import { UserModel } from '@/models/user.model';
 
 import { seedReferenceData, testApp } from '../helpers/app';
-import { createStaffUser, createTenant, facultyPayload, type TenantFixture } from '../helpers/fixtures';
+import { createPlatformAdmin, createStaffUser, createTenant, facultyPayload, type TenantFixture } from '../helpers/fixtures';
 
 const API = '/api/v1';
 
@@ -721,6 +721,41 @@ describe('faculty API', () => {
       expect(response.body.data).toHaveLength(0);
     });
 
+    /**
+     * The list above proves the query is scoped; this proves a *direct* fetch is
+     * too, and that it answers 404 rather than 403.
+     *
+     * The distinction is the point: 403 concedes the record exists and merely
+     * refuses it, which tells one college that an id belongs to someone else.
+     * `findByIdOrFail` runs inside the tenant scope, so a foreign id resolves to
+     * nothing at all. `profile` is asserted separately because it is a different
+     * service method behind its own route.
+     */
+    it("answers 404, not 403, when another college fetches faculty by id", async () => {
+      const created = await request(app)
+        .post(`${API}/faculty`)
+        .set(auth(tenant.token))
+        .send(facultyPayload(tenant))
+        .expect(201);
+
+      const facultyId = created.body.data.id as string;
+
+      const otherTenant = await createTenant(app, {
+        code: 'ZZX',
+        adminEmail: 'admin.zzx@example.edu',
+      });
+
+      await request(app)
+        .get(`${API}/faculty/${facultyId}`)
+        .set(auth(otherTenant.token))
+        .expect(404);
+
+      await request(app)
+        .get(`${API}/faculty/${facultyId}/profile`)
+        .set(auth(otherTenant.token))
+        .expect(404);
+    });
+
     it('refuses a student any access to faculty records', async () => {
       const created = await request(app)
         .post(`${API}/faculty`)
@@ -737,6 +772,32 @@ describe('faculty API', () => {
       await request(app)
         .get(`${API}/faculty/${created.body.data.id}`)
         .set(auth(student.token))
+        .expect(403);
+    });
+  });
+
+  describe('platform administrator on a tenant-scoped route', () => {
+    /**
+     * A platform administrator holds `*:*`, so every permission check passes —
+     * but they have no college of their own, and these routes read through
+     * tenant-scoped repositories. That combination reached
+     * `BaseRepository.scope()` with no tenant context and threw, surfacing as
+     * a 500 for an ordinary authenticated caller.
+     *
+     * The refusal is deliberate: cross-tenant reads belong on the platform
+     * endpoints built for them, not on a college's own routes.
+     */
+    it('is refused rather than failing internally', async () => {
+      const platform = await createPlatformAdmin(app);
+
+      await request(app)
+        .get(API + '/faculty')
+        .set(auth(platform.token))
+        .expect(403);
+
+      await request(app)
+        .get(API + '/faculty/60f0000000000000000000aa')
+        .set(auth(platform.token))
         .expect(403);
     });
   });
