@@ -1,5 +1,5 @@
 import { Router } from 'express';
-
+import { platformAggregationRoutes } from './platform-aggregation.routes';
 
 import { attendanceRoutes } from './attendance.routes';
 import { auditRoutes } from './audit.routes';
@@ -12,7 +12,6 @@ import { examinationRoutes } from './examination.routes';
 import { facultyRoutes } from './faculty.routes';
 import { fileRoutes } from './file.routes';
 import { notificationRoutes } from './notification.routes';
-import { platformAggregationRoutes } from './platform-aggregation.routes';
 import {
   applicationRoutes,
   companyRoutes,
@@ -53,9 +52,9 @@ export function registerV1Routes(): Router {
   // Everything below requires a signed-in, usable account. Permission checks
   // are declared per route; row-level scope is applied in the services.
   router.use(authenticate, requireActiveAccount);
-
+  router.use('/platform/aggregations', platformAggregationRoutes());
   router.use('/colleges', collegeRoutes());
-  router.use('/platform/aggregation', platformAggregationRoutes());
+  router.use('/colleges', collegeRoutes());
   router.use('/departments', departmentRoutes());
   router.use('/batches', batchRoutes());
   router.use('/students', studentRoutes());
